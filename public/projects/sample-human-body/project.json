@@ -1,0 +1,112 @@
+{
+  "id": "sample-human-body",
+  "name": "Human Body (sample)",
+  "model": "model.gltf",
+  "transform": {
+    "scale": 0.9,
+    "rotation": [
+      0,
+      0,
+      0
+    ],
+    "offset": [
+      0,
+      0.55,
+      0
+    ]
+  },
+  "labels": [
+    {
+      "id": "l-head",
+      "title": "Head",
+      "description": "Contains the brain and the major sense organs.",
+      "anchor": [
+        0,
+        0.75,
+        0.16
+      ],
+      "meshName": "Head",
+      "color": "#4cc9ff",
+      "rank": 0
+    },
+    {
+      "id": "l-thorax",
+      "title": "Thorax",
+      "description": "The chest — houses the heart and lungs, protected by the rib cage.",
+      "anchor": [
+        0.19,
+        0.4,
+        0.05
+      ],
+      "meshName": "Thorax",
+      "color": "#ff5c7a",
+      "rank": 0
+    },
+    {
+      "id": "l-abdomen",
+      "title": "Abdomen",
+      "description": "Holds the digestive organs, liver, and kidneys.",
+      "anchor": [
+        0.17,
+        0.15,
+        0.05
+      ],
+      "meshName": "Abdomen",
+      "color": "#ffb04c",
+      "rank": 1
+    },
+    {
+      "id": "l-right-arm",
+      "title": "Right Arm",
+      "description": "Upper limb used for manipulation and reach.",
+      "anchor": [
+        0.3,
+        0.3,
+        0.05
+      ],
+      "meshName": "RightUpperArm",
+      "color": "#6ee86e",
+      "rank": 1
+    },
+    {
+      "id": "l-left-thigh",
+      "title": "Left Thigh",
+      "description": "The largest bone of the body, the femur, sits here.",
+      "anchor": [
+        -0.09,
+        -0.16,
+        0.09
+      ],
+      "meshName": "LeftThigh",
+      "color": "#9d7bff",
+      "rank": 2
+    },
+    {
+      "id": "l-right-foot",
+      "title": "Right Foot",
+      "description": "Bears body weight and enables walking.",
+      "anchor": [
+        0.09,
+        -0.68,
+        0.1
+      ],
+      "meshName": "RightFoot",
+      "color": "#ff7bd5",
+      "rank": 3
+    }
+  ],
+  "targets": [
+    {
+      "index": 0,
+      "role": "main"
+    }
+  ],
+  "markerStyle": "single",
+  "animation": {
+    "autoplay": true
+  },
+  "tourAutoSec": 8,
+  "attribution": "Stylized demo model generated for AR Label Studio (CC0).",
+  "createdAt": 1783789787453,
+  "updatedAt": 1783789787453
+}
