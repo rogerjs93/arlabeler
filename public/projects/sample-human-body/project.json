@@ -11,10 +11,11 @@
     ],
     "offset": [
       0,
-      0.55,
-      0
+      0,
+      0.15
     ]
   },
+  "cardOrientation": "upright",
   "labels": [
     {
       "id": "l-head",

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { ARProject, Label } from '../../types'
-import { LABEL_COLORS, newLabelId, newProjectId } from '../../types'
+import { DEFAULT_TRANSFORM, FLAT_TRANSFORM, LABEL_COLORS, newLabelId, newProjectId } from '../../types'
 import {
   loadBlob,
   loadProjectDoc,
@@ -167,7 +167,7 @@ export default function Editor() {
 
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
         <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
-          <QuadViewport controller={controller} transform={doc.transform} mode={mode} onPick={onViewportPick} />
+          <QuadViewport controller={controller} transform={doc.transform} orientation={doc.cardOrientation ?? 'upright'} mode={mode} onPick={onViewportPick} />
         </div>
 
         <div style={{ width: 360, flex: '0 0 auto', borderLeft: '1px solid var(--border)', background: 'var(--bg-raised)', overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -238,12 +238,32 @@ export default function Editor() {
 
               <section>
                 <h3 className="small" style={sectionTitle}>Placement on the card</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+                  <label className="small">
+                    <input
+                      type="radio"
+                      checked={(doc.cardOrientation ?? 'upright') === 'upright'}
+                      onChange={() => updateDoc((d) => ({ ...d, cardOrientation: 'upright', transform: { ...d.transform, offset: [...DEFAULT_TRANSFORM.offset] } }))}
+                    />{' '}
+                    Card upright — on a screen, wall, or held up (model faces the viewer)
+                  </label>
+                  <label className="small">
+                    <input
+                      type="radio"
+                      checked={doc.cardOrientation === 'flat'}
+                      onChange={() => updateDoc((d) => ({ ...d, cardOrientation: 'flat', transform: { ...d.transform, offset: [...FLAT_TRANSFORM.offset] } }))}
+                    />{' '}
+                    Card flat on a table (model stands on the card)
+                  </label>
+                </div>
                 <SliderRow label={`Scale ${doc.transform.scale.toFixed(2)}`} min={0.2} max={3} step={0.05} value={doc.transform.scale}
                   onChange={(v) => updateDoc((d) => ({ ...d, transform: { ...d.transform, scale: v } }))} />
                 <SliderRow label={`Rotate ${(doc.transform.rotation[1] * 57.3).toFixed(0)}°`} min={-Math.PI} max={Math.PI} step={0.05} value={doc.transform.rotation[1]}
                   onChange={(v) => updateDoc((d) => ({ ...d, transform: { ...d.transform, rotation: [d.transform.rotation[0], v, d.transform.rotation[2]] } }))} />
-                <SliderRow label={`Height ${doc.transform.offset[1].toFixed(2)}`} min={0} max={1.5} step={0.05} value={doc.transform.offset[1]}
+                <SliderRow label={`Up/down ${doc.transform.offset[1].toFixed(2)}`} min={-0.75} max={1.5} step={0.05} value={doc.transform.offset[1]}
                   onChange={(v) => updateDoc((d) => ({ ...d, transform: { ...d.transform, offset: [d.transform.offset[0], v, d.transform.offset[2]] } }))} />
+                <SliderRow label={`Forward ${doc.transform.offset[2].toFixed(2)}`} min={-0.5} max={1} step={0.05} value={doc.transform.offset[2]}
+                  onChange={(v) => updateDoc((d) => ({ ...d, transform: { ...d.transform, offset: [d.transform.offset[0], d.transform.offset[1], v] } }))} />
               </section>
 
               <section>

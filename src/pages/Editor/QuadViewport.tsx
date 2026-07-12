@@ -49,11 +49,13 @@ interface ViewState {
 export default function QuadViewport({
   controller,
   transform,
+  orientation,
   mode,
   onPick,
 }: {
   controller: EffectsController | null
   transform: ModelTransform
+  orientation: 'flat' | 'upright'
   mode: EditorMode
   onPick: (r: PickResult, view: string) => void
 }) {
@@ -65,7 +67,7 @@ export default function QuadViewport({
         <directionalLight position={[-3, 2, -2]} intensity={0.5} />
         {controller && <primitive object={controller.model.root} />}
         {controller && <primitive object={controller.pinsGroup} />}
-        <CardGhost transform={transform} />
+        <CardGhost transform={transform} orientation={orientation} />
         <gridHelper args={[3, 30, '#2a3242', '#1b2230']} position={[0, -0.501, 0]} />
         <MultiViewRenderer controller={controller} mode={mode} onPick={onPick} />
       </Canvas>
@@ -109,8 +111,11 @@ export default function QuadViewport({
   )
 }
 
-/** Dashed outline showing where the printed marker card sits relative to the model. */
-function CardGhost({ transform }: { transform: ModelTransform }) {
+/**
+ * Dashed outline showing where the printed marker card sits relative to the
+ * model — horizontal (flat on a table) or vertical behind the model (upright).
+ */
+function CardGhost({ transform, orientation }: { transform: ModelTransform; orientation: 'flat' | 'upright' }) {
   const ref = useRef<THREE.Group>(null)
   useFrame(() => {
     const g = ref.current
@@ -119,14 +124,15 @@ function CardGhost({ transform }: { transform: ModelTransform }) {
     // card center in model space = -offset/s ; card width 1 -> 1/s model units
     g.position.set(-transform.offset[0] / s, -transform.offset[1] / s, -transform.offset[2] / s)
     g.scale.setScalar(1 / s)
+    g.rotation.x = orientation === 'flat' ? -Math.PI / 2 : 0
   })
   const geo = useMemo(() => {
     const g = new THREE.BufferGeometry()
     const h = 0.5
     g.setFromPoints([
-      new THREE.Vector3(-h, 0, -h), new THREE.Vector3(h, 0, -h),
-      new THREE.Vector3(h, 0, h), new THREE.Vector3(-h, 0, h),
-      new THREE.Vector3(-h, 0, -h),
+      new THREE.Vector3(-h, -h, 0), new THREE.Vector3(h, -h, 0),
+      new THREE.Vector3(h, h, 0), new THREE.Vector3(-h, h, 0),
+      new THREE.Vector3(-h, -h, 0),
     ])
     return g
   }, [])
@@ -135,7 +141,7 @@ function CardGhost({ transform }: { transform: ModelTransform }) {
       <lineLoop geometry={geo}>
         <lineBasicMaterial color="#4cc9ff" transparent opacity={0.7} />
       </lineLoop>
-      <mesh rotation-x={-Math.PI / 2}>
+      <mesh>
         <planeGeometry args={[1, 1]} />
         <meshBasicMaterial color="#4cc9ff" transparent opacity={0.06} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>

@@ -39,6 +39,7 @@ export default function Home() {
       labels: [],
       targets: [{ index: 0, role: 'main' }],
       markerStyle: 'single',
+      cardOrientation: 'upright',
       animation: { autoplay: true },
       createdAt: Date.now(),
       updatedAt: Date.now(),

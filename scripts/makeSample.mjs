@@ -91,7 +91,8 @@ const result = await exporter.parseAsync(body, { binary: false })
       id,
       name: 'Human Body (sample)',
       model: 'model.gltf',
-      transform: { scale: 0.9, rotation: [0, 0, 0], offset: [0, 0.55, 0] },
+      transform: { scale: 0.9, rotation: [0, 0, 0], offset: [0, 0, 0.15] },
+      cardOrientation: 'upright',
       labels: [
         L('Head', 'Contains the brain and the major sense organs.', [0, 0.75, 0.16], 'Head', '#4cc9ff', 0),
         L('Thorax', 'The chest — houses the heart and lungs, protected by the rib cage.', [0.19, 0.4, 0.05], 'Thorax', '#ff5c7a', 0),

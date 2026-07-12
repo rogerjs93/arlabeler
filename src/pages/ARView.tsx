@@ -78,14 +78,20 @@ export default function ARView() {
       scene.add(dir)
 
       const t = resolved.doc.transform
+      // 'upright' (default): card on a screen/wall or held up — model faces the
+      // viewer, its up along the card's up. 'flat': card on a table — rotate so
+      // the model's Y-up points out of the card and it stands on it.
+      const flat = resolved.doc.cardOrientation === 'flat'
 
       // Build content per target. Single/tent share one content group that
       // hands off between visible anchors; multi-card gets a clone per card.
       const makeInner = () => {
         const container3 = new THREE.Group()
-        container3.rotation.x = Math.PI / 2 // model Y-up -> out of the card
+        if (flat) container3.rotation.x = Math.PI / 2
         const inner = new THREE.Group()
-        inner.position.set(t.offset[0], t.offset[2], t.offset[1]) // y-up offset -> z out
+        // offset is authored in model space (x right, y up, z toward viewer);
+        // container3's rotation already maps those axes onto the card.
+        inner.position.set(t.offset[0], t.offset[1], t.offset[2])
         inner.rotation.set(t.rotation[0], t.rotation[1], t.rotation[2])
         inner.scale.setScalar(t.scale)
         container3.add(inner)
@@ -258,7 +264,9 @@ export default function ARView() {
 
   return (
     <div style={{ position: 'relative', height: '100%', background: '#000' }}>
-      <div ref={containerRef} style={{ position: 'absolute', inset: 0, overflow: 'hidden' }} />
+      {/* zIndex: 0 creates a stacking context: MindAR's camera <video> has
+          z-index -2 and would otherwise paint behind the page background. */}
+      <div ref={containerRef} style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 0 }} />
 
       <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 10, display: 'flex', gap: 8, alignItems: 'center' }}>
         <Link to="/"><button>←</button></Link>

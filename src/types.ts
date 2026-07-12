@@ -45,12 +45,26 @@ export interface ARProject {
   tourAutoSec?: number
   /** Marker style: single flat card or 3-face fold-up tent. */
   markerStyle: 'single' | 'tent'
+  /**
+   * How the printed card is expected to be held: 'upright' (on a screen, wall
+   * or held up — model faces the viewer) or 'flat' (lying on a table — model
+   * stands up out of the card). Default 'upright'.
+   */
+  cardOrientation?: 'flat' | 'upright'
   attribution?: string
   createdAt: number
   updatedAt: number
 }
 
+/** Default placement for an upright card: centered, floating slightly in front. */
 export const DEFAULT_TRANSFORM: ModelTransform = {
+  scale: 1,
+  rotation: [0, 0, 0],
+  offset: [0, 0, 0.15],
+}
+
+/** Default placement for a card lying flat on a table: standing on the card. */
+export const FLAT_TRANSFORM: ModelTransform = {
   scale: 1,
   rotation: [0, 0, 0],
   offset: [0, 0.55, 0],
