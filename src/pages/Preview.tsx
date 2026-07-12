@@ -7,6 +7,7 @@ import { resolveProject, type ResolvedProject } from '../store/projects'
 import { loadModel, formatFromFileName, type LoadedModel } from '../loaders/loadModel'
 import { EffectsController } from '../scene/effects'
 import ViewerHud from '../components/ViewerHud'
+import { PollingResizeObserver, needsPollingResize } from '../utils/pollingResizeObserver'
 
 /**
  * Non-AR 3D preview: same model, pins and effects as the AR viewer, driven by
@@ -37,7 +38,7 @@ export default function Preview() {
         setError(`Unknown model format: ${r.doc.model}`)
         return
       }
-      const m = await loadModel(r.modelUrl, format)
+      const m = await loadModel(r.modelUrl, format, r.doc.segmentation)
       if (cancelled) return
       setResolved(r)
       setModel(m)
@@ -112,6 +113,7 @@ export default function Preview() {
         camera={{ position: [1.4, 1.0, 1.8], fov: 45 }}
         dpr={[1, 2]}
         onPointerMissed={() => setSelectedLabelId(undefined)}
+        resize={needsPollingResize ? { polyfill: PollingResizeObserver as unknown as typeof ResizeObserver } : undefined}
       >
         <color attach="background" args={['#12151c']} />
         <hemisphereLight args={['#cfd8ea', '#3a4152', 1.1]} />

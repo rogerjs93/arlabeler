@@ -8,6 +8,47 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // Some embedded/headless browsers never fire requestAnimationFrame, which
+      // stalls three.js/r3f entirely. Race the native rAF against a timeout:
+      // in normal browsers vsync (~16 ms) always wins and behavior is
+      // unchanged; where rAF is dead the timeout keeps rendering (~30 fps
+      // visible, throttled to ~4 fps while the document is hidden).
+      ;(function () {
+        var native = window.requestAnimationFrame.bind(window)
+        var nativeCancel = window.cancelAnimationFrame.bind(window)
+        var seq = 1
+        var entries = {}
+        window.requestAnimationFrame = function (cb) {
+          var id = seq++
+          var done = false
+          var nid = native(function (t) {
+            if (done) return
+            done = true
+            clearTimeout(entries[id] && entries[id].tid)
+            delete entries[id]
+            cb(t)
+          })
+          var tid = setTimeout(function () {
+            if (done) return
+            done = true
+            nativeCancel(nid)
+            delete entries[id]
+            cb(performance.now())
+          }, document.hidden ? 250 : 32)
+          entries[id] = { nid: nid, tid: tid }
+          return id
+        }
+        window.cancelAnimationFrame = function (id) {
+          var e = entries[id]
+          if (e) {
+            nativeCancel(e.nid)
+            clearTimeout(e.tid)
+            delete entries[id]
+          }
+        }
+      })()
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

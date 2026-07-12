@@ -12,6 +12,27 @@ export interface Label {
   rank: number
 }
 
+/** A painted segment ("virtual part") of a single mesh. */
+export interface SegmentDef {
+  id: number
+  name: string
+  color: string
+}
+
+/**
+ * Brush-painted face mask for one mesh. Faces are numbered in the mesh's
+ * non-indexed triangle order (face i = vertices 3i..3i+2), which is stable
+ * for a given model file + three version. At load time the mesh is split into
+ * one real mesh per segment, so segments behave exactly like separate parts
+ * (highlight, isolate, explode, label binding, multi-card).
+ */
+export interface MeshSegmentation {
+  segments: SegmentDef[]
+  /** RLE pairs [segmentId, runLength] over faces; segment 0 = unassigned. */
+  faceRuns: [number, number][]
+  faceCount: number
+}
+
 /** One compiled image target inside targets.mind. */
 export interface TargetDef {
   index: number
@@ -51,6 +72,8 @@ export interface ARProject {
    * stands up out of the card). Default 'upright'.
    */
   cardOrientation?: 'flat' | 'upright'
+  /** Brush-painted masks per mesh name — split into real parts at load time. */
+  segmentation?: Record<string, MeshSegmentation>
   attribution?: string
   createdAt: number
   updatedAt: number

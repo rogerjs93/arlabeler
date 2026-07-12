@@ -12,8 +12,10 @@ import {
 } from '../../store/projects'
 import { loadModel, formatFromFileName, type LoadedModel } from '../../loaders/loadModel'
 import { EffectsController } from '../../scene/effects'
+import { PaintSession, facesToRuns } from '../../scene/segmentation'
 import QuadViewport, { type EditorMode, type PickResult } from './QuadViewport'
 import MarkerPanel from './MarkerPanel'
+import PaintPanel, { type PaintState } from './PaintPanel'
 
 export default function Editor() {
   const { id } = useParams<{ id: string }>()
@@ -25,7 +27,9 @@ export default function Editor() {
   const [hoverPart, setHoverPart] = useState<string>()
   const [mode, setMode] = useState<EditorMode>('select')
   const [tab, setTab] = useState<'labels' | 'marker'>('labels')
+  const [paint, setPaint] = useState<PaintState | null>(null)
   const saveTimer = useRef<number | undefined>(undefined)
+  const modelBlobRef = useRef<Blob | null>(null)
 
   // ---- load (cloning a static sample into a new local project if needed) ----
   useEffect(() => {
@@ -59,8 +63,9 @@ export default function Editor() {
         setError(`Unknown model format: ${d.model}`)
         return
       }
-      const m = await loadModel(modelBlob, format)
+      const m = await loadModel(modelBlob, format, d.segmentation)
       if (cancelled) return
+      modelBlobRef.current = modelBlob
       setDoc(d)
       setModel(m)
     })().catch((e) => setError(String(e)))
@@ -102,6 +107,101 @@ export default function Editor() {
 
   const updateLabel = (labelId: string, patch: Partial<Label>) =>
     updateDoc((d) => ({ ...d, labels: d.labels.map((l) => (l.id === labelId ? { ...l, ...patch } : l)) }))
+
+  // ---- brush segmentation ----
+  // Painting operates on the UNSPLIT mesh (masks are defined over its face
+  // order), so entering paint mode reloads the model without segmentation and
+  // apply/cancel reload it with the (new) masks baked into real parts.
+  useEffect(() => {
+    if (controller) controller.pinsGroup.visible = mode !== 'paint'
+  }, [controller, mode])
+
+  const reloadModel = useCallback(
+    async (segmentation?: ARProject['segmentation']) => {
+      if (!modelBlobRef.current || !doc) return null
+      const format = formatFromFileName(doc.model)!
+      const m = await loadModel(modelBlobRef.current, format, segmentation)
+      setModel(m)
+      return m
+    },
+    [doc],
+  )
+
+  const startPaintOn = (m: LoadedModel, meshName: string | undefined, d: ARProject) => {
+    const target =
+      (meshName && m.parts.find((p) => p.name === meshName)) ||
+      m.parts.reduce((a, b) =>
+        (a.mesh.geometry.attributes.position?.count ?? 0) >= (b.mesh.geometry.attributes.position?.count ?? 0) ? a : b,
+      )
+    const existing = d.segmentation?.[target.name]
+    const session = new PaintSession(target.mesh, existing)
+    const segments = existing?.segments.length
+      ? existing.segments
+      : [{ id: 1, name: 'Segment 1', color: LABEL_COLORS[0] }]
+    session.repaintAll(segments)
+    setPaint({
+      meshName: target.name,
+      session,
+      segments,
+      activeId: segments[0].id,
+      radius: 0.08,
+      erase: false,
+      through: false,
+    })
+  }
+
+  const enterPaint = async () => {
+    if (!doc) return
+    const fresh = await reloadModel(undefined) // unsplit
+    if (!fresh) return
+    startPaintOn(fresh, doc.segmentation && Object.keys(doc.segmentation)[0], doc)
+    setMode('paint')
+    setSelectedLabelId(undefined)
+  }
+
+  const switchPaintMesh = (meshName: string) => {
+    if (!model || !doc || !paint) return
+    // keep the current mesh's work in the doc? No — switching discards unsaved
+    // strokes on the previous mesh (they're still in doc if applied before).
+    startPaintOn(model, meshName, doc)
+  }
+
+  const applyPaint = async () => {
+    if (!paint || !doc) return
+    const used = paint.session.usage()
+    const segments = paint.segments.filter((s) => (used.get(s.id) ?? 0) > 0)
+    const segmentation: ARProject['segmentation'] = { ...(doc.segmentation ?? {}) }
+    if (segments.length === 0) {
+      delete segmentation[paint.meshName]
+    } else {
+      segmentation[paint.meshName] = {
+        segments,
+        faceRuns: facesToRuns(paint.session.faceSeg),
+        faceCount: paint.session.faceCount,
+      }
+    }
+    updateDoc({ segmentation })
+    setPaint(null)
+    setMode('select')
+    await reloadModel(segmentation)
+  }
+
+  const cancelPaint = async () => {
+    setPaint(null)
+    setMode('select')
+    await reloadModel(doc?.segmentation)
+  }
+
+  const onStroke = useCallback(
+    (point: import('three').Vector3, dir: import('three').Vector3) => {
+      setPaint((p) => {
+        if (!p) return p
+        p.session.paint(point, p.radius, p.erase ? 0 : p.activeId, p.segments, dir, p.through)
+        return p
+      })
+    },
+    [],
+  )
 
   const onViewportPick = useCallback(
     (r: PickResult) => {
@@ -167,14 +267,33 @@ export default function Editor() {
 
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
         <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
-          <QuadViewport controller={controller} transform={doc.transform} orientation={doc.cardOrientation ?? 'upright'} mode={mode} onPick={onViewportPick} />
+          <QuadViewport
+            controller={controller}
+            transform={doc.transform}
+            orientation={doc.cardOrientation ?? 'upright'}
+            mode={mode}
+            onPick={onViewportPick}
+            paint={mode === 'paint' && paint ? { mesh: paint.session.mesh, radius: paint.radius, onStroke } : null}
+          />
         </div>
 
         <div style={{ width: 360, flex: '0 0 auto', borderLeft: '1px solid var(--border)', background: 'var(--bg-raised)', overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {tab === 'labels' ? (
+          {mode === 'paint' && paint ? (
+            <PaintPanel
+              paint={paint}
+              meshNames={model.parts.map((p) => p.name)}
+              onChange={setPaint}
+              onSwitchMesh={switchPaintMesh}
+              onApply={applyPaint}
+              onCancel={cancelPaint}
+            />
+          ) : tab === 'labels' ? (
             <>
               <button className="primary" onClick={() => setMode(mode === 'addLabel' ? 'select' : 'addLabel')}>
                 {mode === 'addLabel' ? 'Cancel placing' : '+ Add label (click model)'}
+              </button>
+              <button onClick={enterPaint} title="Brush-paint masks that become highlightable parts">
+                🖌 Paint segments{doc.segmentation && Object.keys(doc.segmentation).length > 0 ? ' (edit)' : ''}
               </button>
 
               <section>

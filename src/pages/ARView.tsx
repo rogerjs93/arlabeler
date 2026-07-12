@@ -53,7 +53,7 @@ export default function ARView() {
       }
 
       const format = formatFromFileName(resolved.doc.model)!
-      const model = await loadModel(resolved.modelUrl, format)
+      const model = await loadModel(resolved.modelUrl, format, resolved.doc.segmentation)
       if (disposed) return
 
       const targets = resolved.doc.targets.length ? resolved.doc.targets : [{ index: 0, role: 'main' as const }]

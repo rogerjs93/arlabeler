@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import type { EffectsController } from '../../scene/effects'
 import type { ModelTransform } from '../../types'
+import { PollingResizeObserver, needsPollingResize } from '../../utils/pollingResizeObserver'
 
 /**
  * Four synchronized views of one scene rendered with scissored viewports:
@@ -11,7 +12,16 @@ import type { ModelTransform } from '../../types'
  * from whichever axis shows the anatomy best.
  */
 
-export type EditorMode = 'select' | 'addLabel'
+export type EditorMode = 'select' | 'addLabel' | 'paint'
+
+export interface PaintProps {
+  /** The mesh being painted; strokes raycast only against it. */
+  mesh: THREE.Mesh
+  /** Brush radius in normalized model units (drives the indicator sphere). */
+  radius: number
+  /** Called for every stroke sample with the surface point and view ray. */
+  onStroke: (worldPoint: THREE.Vector3, rayDir: THREE.Vector3) => void
+}
 
 export interface PickResult {
   labelId?: string
@@ -52,16 +62,24 @@ export default function QuadViewport({
   orientation,
   mode,
   onPick,
+  paint,
 }: {
   controller: EffectsController | null
   transform: ModelTransform
   orientation: 'flat' | 'upright'
   mode: EditorMode
   onPick: (r: PickResult, view: string) => void
+  paint?: PaintProps | null
 }) {
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      <Canvas frameloop="always" dpr={[1, 2]} gl={{ antialias: true }} style={{ background: '#0b0e13' }}>
+      <Canvas
+        frameloop="always"
+        dpr={[1, 2]}
+        gl={{ antialias: true }}
+        style={{ background: '#0b0e13' }}
+        resize={needsPollingResize ? { polyfill: PollingResizeObserver as unknown as typeof ResizeObserver } : undefined}
+      >
         <hemisphereLight args={['#cfd8ea', '#3a4152', 1.1]} />
         <directionalLight position={[3, 5, 2]} intensity={1.5} />
         <directionalLight position={[-3, 2, -2]} intensity={0.5} />
@@ -69,7 +87,7 @@ export default function QuadViewport({
         {controller && <primitive object={controller.pinsGroup} />}
         <CardGhost transform={transform} orientation={orientation} />
         <gridHelper args={[3, 30, '#2a3242', '#1b2230']} position={[0, -0.501, 0]} />
-        <MultiViewRenderer controller={controller} mode={mode} onPick={onPick} />
+        <MultiViewRenderer controller={controller} mode={mode} onPick={onPick} paint={paint} />
       </Canvas>
       {/* view captions + separators drawn over the canvas */}
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
@@ -90,21 +108,10 @@ export default function QuadViewport({
           </span>
         ))}
         {mode === 'addLabel' && (
-          <div
-            style={{
-              position: 'absolute',
-              top: 8,
-              left: '50%',
-              transform: 'translateX(-50%)',
-              background: 'var(--accent)',
-              color: '#0b0e13',
-              fontWeight: 600,
-              borderRadius: 8,
-              padding: '4px 12px',
-            }}
-          >
-            Click the model to place the label
-          </div>
+          <div style={modeBanner}>Click the model to place the label</div>
+        )}
+        {mode === 'paint' && (
+          <div style={modeBanner}>Drag on the model to paint · middle-drag/wheel to navigate</div>
         )}
       </div>
     </div>
@@ -153,14 +160,40 @@ function MultiViewRenderer({
   controller,
   mode,
   onPick,
+  paint,
 }: {
   controller: EffectsController | null
   mode: EditorMode
   onPick: (r: PickResult, view: string) => void
+  paint?: PaintProps | null
 }) {
   const { gl, scene, size } = useThree()
   const modeRef = useRef(mode)
   modeRef.current = mode
+  const paintRef = useRef(paint)
+  paintRef.current = paint
+
+  // brush indicator sphere (paint mode only)
+  const brush = useMemo(() => {
+    const m = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 20, 14),
+      new THREE.MeshBasicMaterial({ color: 0x4cc9ff, transparent: true, opacity: 0.28, depthWrite: false }),
+    )
+    m.visible = false
+    m.renderOrder = 900
+    return m
+  }, [])
+  useEffect(() => {
+    scene.add(brush)
+    return () => {
+      scene.remove(brush)
+      brush.geometry.dispose()
+      ;(brush.material as THREE.Material).dispose()
+    }
+  }, [scene, brush])
+  useEffect(() => {
+    brush.visible = false
+  }, [paint, brush])
 
   const cams = useMemo(
     () =>
@@ -254,14 +287,53 @@ function MultiViewRenderer({
       return { cell: row * 2 + col, px, py, rect }
     }
 
+    // raycast the paint mesh in whichever cell the pointer is over
+    const paintHit = (e: PointerEvent): { point: THREE.Vector3; dir: THREE.Vector3 } | null => {
+      const p = paintRef.current
+      if (!p) return null
+      const { cell, px, py } = cellAt(e)
+      const lx = (px % 0.5) * 4 - 1
+      const ly = -((py % 0.5) * 4 - 1)
+      const rect = el.getBoundingClientRect()
+      applyCamera(cell, rect.width / rect.height)
+      cams[cell].updateMatrixWorld() // raycasting reads matrixWorld, not position
+      const raycaster = new THREE.Raycaster()
+      raycaster.setFromCamera(new THREE.Vector2(lx, ly), cams[cell])
+      p.mesh.updateWorldMatrix(true, false)
+      const hits = raycaster.intersectObject(p.mesh, false)
+      if (hits.length === 0) return null
+      return { point: hits[0].point, dir: raycaster.ray.direction.clone() }
+    }
+
+    let painting = false
+
     const onDown = (e: PointerEvent) => {
       const { cell } = cellAt(e)
+      if (modeRef.current === 'paint' && e.button === 0) {
+        painting = true
+        try { el.setPointerCapture(e.pointerId) } catch { /* synthetic or stale pointer */ }
+        const hit = paintHit(e)
+        if (hit) paintRef.current?.onStroke(hit.point, hit.dir)
+        return // left button paints; navigation stays on middle/shift
+      }
       down = { x: e.clientX, y: e.clientY, cell, button: e.button }
       moved = false
-      el.setPointerCapture(e.pointerId)
+      try { el.setPointerCapture(e.pointerId) } catch { /* synthetic or stale pointer */ }
     }
 
     const onMove = (e: PointerEvent) => {
+      // brush indicator + stroke sampling in paint mode
+      if (modeRef.current === 'paint' && paintRef.current) {
+        const hit = paintHit(e)
+        brush.visible = !!hit
+        if (hit) {
+          brush.position.copy(hit.point)
+          brush.scale.setScalar(paintRef.current.radius)
+          if (painting && e.buttons & 1) paintRef.current.onStroke(hit.point, hit.dir)
+        }
+      } else {
+        brush.visible = false
+      }
       if (!down) return
       const dx = e.clientX - down.x
       const dy = e.clientY - down.y
@@ -292,12 +364,17 @@ function MultiViewRenderer({
     }
 
     const onUp = (e: PointerEvent) => {
+      if (painting) {
+        painting = false
+        try { el.releasePointerCapture(e.pointerId) } catch { /* not captured */ }
+        return
+      }
       if (!down) return
       const wasMoved = moved
       const cell = down.cell
       down = null
-      el.releasePointerCapture(e.pointerId)
-      if (wasMoved || e.button !== 0 || !controller) return
+      try { el.releasePointerCapture(e.pointerId) } catch { /* not captured */ }
+      if (wasMoved || e.button !== 0 || !controller || modeRef.current === 'paint') return
 
       // click -> pick in that cell's camera
       const { px, py } = cellAt(e)
@@ -305,6 +382,7 @@ function MultiViewRenderer({
       const ly = -((py % 0.5) * 4 - 1)
       const rect = el.getBoundingClientRect()
       applyCamera(cell, rect.width / rect.height) // aspect equal per cell (w/2)/(h/2)
+      cams[cell].updateMatrixWorld() // raycasting reads matrixWorld, not position
       const raycaster = new THREE.Raycaster()
       raycaster.setFromCamera(new THREE.Vector2(lx, ly), cams[cell])
 
@@ -347,7 +425,19 @@ function MultiViewRenderer({
       el.removeEventListener('pointerup', onUp)
       el.removeEventListener('wheel', onWheel)
     }
-  }, [gl, cams, states, controller, onPick])
+  }, [gl, cams, states, controller, onPick, brush])
 
   return null
+}
+
+const modeBanner: React.CSSProperties = {
+  position: 'absolute',
+  top: 8,
+  left: '50%',
+  transform: 'translateX(-50%)',
+  background: 'var(--accent)',
+  color: '#0b0e13',
+  fontWeight: 600,
+  borderRadius: 8,
+  padding: '4px 12px',
 }

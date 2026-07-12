@@ -2,7 +2,8 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js'
 import { STLLoader } from 'three/addons/loaders/STLLoader.js'
-import type { ModelFormat } from '../types'
+import type { MeshSegmentation, ModelFormat } from '../types'
+import { splitMeshBySegments } from '../scene/segmentation'
 
 export interface LoadedModel {
   /** Normalized: centered at origin, max dimension = 1, ready to parent anywhere. */
@@ -60,7 +61,11 @@ async function parseByFormat(buffer: ArrayBuffer, format: ModelFormat, url: stri
  * is 1. Labels store anchors in this normalized space, so they stay valid
  * regardless of the source file's units.
  */
-export async function loadModel(source: Blob | string, format: ModelFormat): Promise<LoadedModel> {
+export async function loadModel(
+  source: Blob | string,
+  format: ModelFormat,
+  segmentation?: Record<string, MeshSegmentation>,
+): Promise<LoadedModel> {
   let buffer: ArrayBuffer
   let url = ''
   if (typeof source === 'string') {
@@ -90,10 +95,41 @@ export async function loadModel(source: Blob | string, format: ModelFormat): Pro
 
   wrapper.updateWorldMatrix(true, true)
 
-  // Collect named parts (meshes). Ensure unique, stable names.
+  nameMeshesUniquely(wrapper)
+
+  // Bake painted masks into real meshes so segments act like separate parts.
+  if (segmentation) {
+    for (const [meshName, seg] of Object.entries(segmentation)) {
+      if (!seg || seg.faceCount === 0) continue
+      let target: THREE.Mesh | undefined
+      wrapper.traverse((o) => {
+        if (!target && (o as THREE.Mesh).isMesh && o.name === meshName) target = o as THREE.Mesh
+      })
+      if (target) splitMeshBySegments(target, seg)
+    }
+    nameMeshesUniquely(wrapper) // segment names are user-authored; dedupe again
+    wrapper.updateWorldMatrix(true, true)
+  }
+
+  // Collect named parts (meshes).
   const parts: PartInfo[] = []
-  const seen = new Map<string, number>()
   wrapper.traverse((o) => {
+    const mesh = o as THREE.Mesh
+    if (!mesh.isMesh) return
+    const pbox = new THREE.Box3().setFromObject(mesh)
+    const centroid = pbox.getCenter(new THREE.Vector3())
+    // convert to wrapper-local (normalized) space
+    wrapper.worldToLocal(centroid)
+    parts.push({ name: mesh.name, mesh, centroid })
+  })
+
+  return { root: wrapper, parts, animations, format }
+}
+
+/** Give every mesh a unique, stable name (labels and masks reference names). */
+function nameMeshesUniquely(root: THREE.Object3D) {
+  const seen = new Map<string, number>()
+  root.traverse((o) => {
     const mesh = o as THREE.Mesh
     if (!mesh.isMesh) return
     let name = mesh.name || mesh.parent?.name || 'part'
@@ -101,13 +137,5 @@ export async function loadModel(source: Blob | string, format: ModelFormat): Pro
     seen.set(name, n + 1)
     if (n > 0) name = `${name}_${n}`
     mesh.name = name
-
-    const pbox = new THREE.Box3().setFromObject(mesh)
-    const centroid = pbox.getCenter(new THREE.Vector3())
-    // convert to wrapper-local (normalized) space
-    wrapper.worldToLocal(centroid)
-    parts.push({ name, mesh, centroid })
   })
-
-  return { root: wrapper, parts, animations, format }
 }

@@ -46,6 +46,31 @@ highlight, camera-distance label LOD, proximity focus, clips, and tour dimming.
 Pins are billboard sprites (`src/scene/pins.ts`). Editor uses a 4-viewport
 scissored canvas (`QuadViewport.tsx`).
 
+## Brush segmentation
+
+Whole/single-mesh models can be brush-painted into "virtual parts"
+(`src/scene/segmentation.ts` + editor paint mode). Masks are per-face over the
+mesh's **non-indexed** triangle order, stored RLE in `project.json`
+(`segmentation` field), and baked into real separate meshes by `loadModel` — so
+segments behave like separate models everywhere (highlight, isolate, explode,
+labels, multi-card). Painting always operates on the unsplit mesh: entering
+paint mode reloads without segmentation; apply/cancel reload with it. Logic has
+a Node test pattern (esbuild-bundle `segmentation.ts` with `--external:three`,
+run against a SphereGeometry — see git history of the verify flow).
+
+## Headless verification (embedded browser pane)
+
+The automation pane's document is `hidden`: native rAF **never fires** and
+ResizeObserver **never delivers** (both are "before paint"). Two shims make the
+app fully verifiable there anyway:
+- `index.html` races native rAF vs a setTimeout (32 ms visible / 250 ms hidden);
+- `src/utils/pollingResizeObserver.ts` is passed as r3f `<Canvas resize>`
+  polyfill only when `document.hidden` at load.
+With both, the editor mounts for real: drive it with synthetic PointerEvents on
+the canvas and assert via DOM text / `window.__ar` (Preview's dev hook).
+Also: raycasting after moving a camera needs `cam.updateMatrixWorld()` — render
+loops normally hide this, headless exposed it.
+
 ## Verify
 
 `npx tsc -b` + `npm run build`. In a real browser: create project, place labels in
