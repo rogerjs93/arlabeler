@@ -37,6 +37,7 @@ export default function Preview() {
         : src
           ? await resolveSharedProject(src)
           : await resolveProject(id)
+      // (peer status detail is shown by ARView; preview just waits)
       if (!r) {
         setError(
           src || peerId

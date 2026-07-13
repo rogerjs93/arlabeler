@@ -9,6 +9,10 @@ const useHttps = process.env.VITE_HTTPS === '1'
 
 export default defineConfig({
   base: './',
+  define: {
+    // visible build stamp — lets users spot a stale cached bundle instantly
+    __BUILD__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')),
+  },
   plugins: [react(), ...(useHttps ? [basicSsl()] : [])],
   server: {
     host: true, // expose on LAN so a phone can reach the dev server

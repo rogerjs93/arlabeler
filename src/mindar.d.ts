@@ -1,3 +1,6 @@
+/** Build stamp injected by vite.config.ts `define`. */
+declare const __BUILD__: string
+
 declare module 'mind-ar/dist/mindar-image-three.prod.js' {
   import type { Scene, WebGLRenderer, PerspectiveCamera, Group } from 'three'
 

@@ -56,6 +56,7 @@ export default function Home() {
       <div className="topbar">
         <span className="brand">AR Label Studio</span>
         <span className="muted small">label 3D models → print a card → view in AR on any phone</span>
+        <span className="badge" title="If two devices show different builds, refresh the older one">build {__BUILD__}</span>
         <span className="spacer" />
         <button className="primary" onClick={() => fileRef.current?.click()}>
           + New project from 3D model

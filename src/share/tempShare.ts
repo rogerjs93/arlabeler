@@ -26,6 +26,21 @@ interface SharePayload {
   mind?: ArrayBuffer
 }
 
+/**
+ * ICE config: Google STUN plus Open Relay's free public TURN (metered.ca).
+ * TURN lets the transfer work even when phone and desktop are on different
+ * networks behind restrictive NATs; same-WiFi never needs it.
+ */
+const PEER_CONFIG = {
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+    ],
+  },
+}
+
 export interface ShareHost {
   /** URL to encode in the QR (viewer route with ?peer=). */
   url: string
@@ -48,7 +63,7 @@ export async function hostShare(
     mind: mind ? await mind.arrayBuffer() : undefined,
   }
 
-  const peer = new Peer()
+  const peer = new Peer(PEER_CONFIG)
   let served = 0
 
   await new Promise<void>((resolve, reject) => {
@@ -84,11 +99,15 @@ export async function hostShare(
 }
 
 /** Viewer side: receive a project from a hosting editor. */
-export async function resolvePeerProject(peerId: string): Promise<ResolvedProject | undefined> {
-  const peer = new Peer()
+export async function resolvePeerProject(
+  peerId: string,
+  onStatus?: (s: string) => void,
+): Promise<ResolvedProject | undefined> {
+  const peer = new Peer(PEER_CONFIG)
   try {
+    onStatus?.('contacting signaling server…')
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('signaling timeout')), 15000)
+      const timer = setTimeout(() => reject(new Error('signaling server timeout — check the internet connection')), 15000)
       peer.on('open', () => {
         clearTimeout(timer)
         resolve()
@@ -99,12 +118,14 @@ export async function resolvePeerProject(peerId: string): Promise<ResolvedProjec
       })
     })
 
+    onStatus?.('linking to the sharing computer…')
     const conn = peer.connect(peerId, { reliable: true })
     const payload = await new Promise<SharePayload>((resolve, reject) => {
       const timer = setTimeout(
         () => reject(new Error('The sharing computer did not answer — is its editor tab still open?')),
         25000,
       )
+      conn.on('open', () => onStatus?.('connected — receiving the project…'))
       conn.on('data', (d) => {
         const msg = d as { type?: string } & SharePayload
         if (msg?.type === 'project' && msg.doc && msg.model) {

@@ -22,6 +22,7 @@ export default function ARView() {
   const location = useLocation()
   const containerRef = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState<Status>('loading')
+  const [loadDetail, setLoadDetail] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [doc, setDoc] = useState<ARProject | null>(null)
   const [controller, setController] = useState<EffectsController | null>(null)
@@ -38,10 +39,11 @@ export default function ARView() {
       const peerId = sharedPeerFromSearch(location.search)
       if (peerId) setStatus('loading')
       const resolved = peerId
-        ? await resolvePeerProject(peerId)
+        ? await resolvePeerProject(peerId, setLoadDetail)
         : src
           ? await resolveSharedProject(src)
           : await resolveProject(id)
+      setLoadDetail('')
       if (!resolved) {
         setStatus('error')
         setErrorMsg(
@@ -291,13 +293,14 @@ export default function ARView() {
         <span className="badge" style={{ background: 'rgba(14,17,22,0.7)' }}>
           {status === 'tracking' ? '● tracking' : status === 'scanning' ? 'scanning…' : status}
         </span>
+        <span className="badge" style={{ background: 'rgba(14,17,22,0.7)' }}>b {__BUILD__}</span>
       </div>
 
       {status === 'scanning' && (
         <div style={hintStyle}>Point the camera at the printed card</div>
       )}
       {status === 'starting' && <div style={hintStyle}>Starting camera…</div>}
-      {status === 'loading' && <div style={hintStyle}>Loading model…</div>}
+      {status === 'loading' && <div style={hintStyle}>{loadDetail || 'Loading model…'}</div>}
 
       {(status === 'error' || status === 'nomarker') && doc && (
         <div style={{ ...hintStyle, top: '40%' }}>
