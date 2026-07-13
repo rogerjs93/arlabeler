@@ -35,9 +35,10 @@ bind to labels like native parts.
 Projects are stored in the browser (IndexedDB) — other devices can't see them.
 Two ways to view on a phone:
 
-- **Share to phone (temporary)** — one click in Marker & Export uploads the
-  bundle to tmpfiles.org (public temp host, ~60 min) and shows a QR the phone
-  scans. Explicit opt-in; nothing is uploaded until you press the button.
+- **Share to phone (direct)** — one click in Marker & Export streams the project
+  straight from your computer to the phone over an encrypted WebRTC connection
+  (PeerJS): scan the QR, keep the editor tab open while it loads. Nothing is
+  uploaded to any server.
 - **Publish (permanent)** — export the bundle zip, unzip into
   `public/projects/<id>/`, list it in `projects/index.json`, rebuild + push.
 

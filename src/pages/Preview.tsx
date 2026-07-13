@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { resolveSharedProject, sharedSrcFromSearch } from '../share/tempShare'
+import { resolvePeerProject, resolveSharedProject, sharedPeerFromSearch, sharedSrcFromSearch } from '../share/tempShare'
 import * as THREE from 'three'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls, ContactShadows } from '@react-three/drei'
@@ -31,11 +31,16 @@ export default function Preview() {
     let cancelled = false
     ;(async () => {
       const src = sharedSrcFromSearch(location.search)
-      const r = src ? await resolveSharedProject(src) : await resolveProject(id)
+      const peerId = sharedPeerFromSearch(location.search)
+      const r = peerId
+        ? await resolvePeerProject(peerId)
+        : src
+          ? await resolveSharedProject(src)
+          : await resolveProject(id)
       if (!r) {
         setError(
-          src
-            ? 'Shared project unavailable — temporary shares expire after about an hour. Ask for a fresh share link.'
+          src || peerId
+            ? 'Shared project unavailable — make sure the sharing computer still has its editor tab open, then rescan the QR.'
             : 'Project not found. It may only exist in another browser, or has not been published yet.',
         )
         return

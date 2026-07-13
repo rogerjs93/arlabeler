@@ -58,16 +58,18 @@ paint mode reloads without segmentation; apply/cancel reload with it. Logic has
 a Node test pattern (esbuild-bundle `segmentation.ts` with `--external:three`,
 run against a SphereGeometry — see git history of the verify flow).
 
-## Temporary share (no backend)
+## Direct share (no backend, no storage)
 
-"Share to phone" (`src/share/tempShare.ts`) zips the bundle and uploads to
-tmpfiles.org (~60 min retention) on explicit user click; the QR opens
-`#/view/shared?src=<zip url>` and ARView/Preview stream+unzip it (JSZip). The
-`?src=` loader also accepts exported publish bundles (folder-wrapped zips).
-Note: automated probing of the temp host from agent tooling is blocked by the
-sandbox (exfil guard) — the upload path is user-triggered and must be smoke
--tested by a human click; everything around it (zip build, unzip, resolve) is
-verifiable locally.
+"Share to phone" (`src/share/tempShare.ts`) streams the project desktop→phone
+over WebRTC (PeerJS + its free public signaling cloud). QR opens
+`#/view/shared?peer=<id>`; the editor tab must stay open while phones load.
+Verified loopback through the real PeerJS cloud (byte-exact model transfer).
+Do NOT go back to free file hosts for this: tmpfiles.org uploads fine from the
+browser but its /dl/ endpoint sends **no CORS headers**, so the phone can never
+read the file (this bug shipped once — heading said "Project not found").
+The `?src=<zip url>` loader still exists for any CORS-accessible hosted bundle
+(also accepts folder-wrapped publish zips). Caveat: no TURN server configured,
+so peers on mutually restrictive NATs may fail — same-WiFi is the target case.
 
 ## Headless verification (embedded browser pane)
 

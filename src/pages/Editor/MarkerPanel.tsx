@@ -4,7 +4,7 @@ import type { ARProject, TargetDef } from '../../types'
 import { generateSingleCard, generateTentCard, generateMultiCardSet, canvasToBlob } from '../../marker/cardGenerator'
 import { compileMindFile } from '../../marker/compileMind'
 import { exportBundle, downloadBlob } from '../../marker/exportBundle'
-import { buildShareZip, uploadTemp } from '../../share/tempShare'
+import { hostShare, type ShareHost } from '../../share/tempShare'
 import { loadBlob, saveBlob } from '../../store/projects'
 
 type MarkerMode = 'single' | 'tent' | 'multicard'
@@ -37,8 +37,12 @@ export default function MarkerPanel({
   const [progress, setProgress] = useState(0)
   const [message, setMessage] = useState('')
   const [cardUrl, setCardUrl] = useState<string>()
-  const [share, setShare] = useState<{ state: 'idle' | 'working' | 'done' | 'error'; url?: string; error?: string }>({ state: 'idle' })
+  const [share, setShare] = useState<{ state: 'idle' | 'working' | 'done' | 'error'; url?: string; error?: string; status?: string }>({ state: 'idle' })
   const shareQrRef = useRef<HTMLCanvasElement>(null)
+  const shareHostRef = useRef<ShareHost | null>(null)
+
+  // stop hosting when the panel unmounts
+  useEffect(() => () => shareHostRef.current?.stop(), [])
 
   useEffect(() => {
     localStorage.setItem('arlabeler:baseUrl', baseUrl)
@@ -121,13 +125,15 @@ export default function MarkerPanel({
 
   const shareToPhone = async () => {
     setShare({ state: 'working' })
+    shareHostRef.current?.stop()
     try {
-      const zip = await buildShareZip(doc)
-      const dlUrl = await uploadTemp(zip)
-      const shareUrl = `${baseUrl.replace(/\/?$/, '/')}#/view/shared?src=${encodeURIComponent(dlUrl)}`
-      setShare({ state: 'done', url: shareUrl })
+      const host = await hostShare(doc, baseUrl, (status) =>
+        setShare((s) => (s.state === 'done' ? { ...s, status } : s)),
+      )
+      shareHostRef.current = host
+      setShare({ state: 'done', url: host.url, status: 'waiting for the phone to connect…' })
     } catch (e) {
-      setShare({ state: 'error', error: String(e) })
+      setShare({ state: 'error', error: e instanceof Error ? e.message : String(e) })
     }
   }
 
@@ -200,19 +206,19 @@ export default function MarkerPanel({
       )}
 
       <section>
-        <h3 className="small" style={sectionTitle}>Share to phone (temporary)</h3>
+        <h3 className="small" style={sectionTitle}>Share to phone (direct)</h3>
         <p className="small muted" style={{ margin: '0 0 8px' }}>
-          Projects are saved in this browser only — another device can't see them. This uploads the
-          project (model + labels + marker) to tmpfiles.org, a public temporary host, for about
-          <strong> 60 minutes</strong>, and shows a QR your phone can scan. For a permanent link,
-          export the bundle and publish it to the site.
+          Projects are saved in this browser only — another device can't see them. Sharing streams the
+          project (model + labels + marker) <strong>directly from this computer to the phone</strong> over
+          an encrypted peer connection; nothing is uploaded to any server. Keep this tab open while the
+          phone loads. For a permanent link, export the bundle and publish it to the site.
         </p>
         <button onClick={shareToPhone} disabled={share.state === 'working'}>
-          {share.state === 'working' ? 'Uploading…' : '📱 Share to phone (1 h)'}
+          {share.state === 'working' ? 'Connecting…' : '📱 Share to phone'}
         </button>
         {share.state === 'error' && (
           <div className="small" style={{ color: 'var(--danger)', marginTop: 6 }}>
-            Share failed: {share.error} — the temp-host service may be unreachable; try again or publish instead.
+            Share failed: {share.error} — check the internet connection and try again, or publish instead.
           </div>
         )}
         {share.state === 'done' && share.url && (
@@ -222,9 +228,10 @@ export default function MarkerPanel({
             <button className="small" style={{ marginTop: 6 }} onClick={() => navigator.clipboard.writeText(share.url!)}>
               copy link
             </button>
+            <p className="small" style={{ marginTop: 6, color: 'var(--ok)' }}>{share.status}</p>
             <p className="small muted" style={{ marginTop: 6 }}>
-              Scan this QR with the phone to open the AR viewer, then point the phone at the printed
-              (or on-screen) marker card below. Expires in ~1 hour.
+              Scan with the phone to open the AR viewer, then point it at the printed (or on-screen)
+              marker card below. The link works as long as this tab stays open.
             </p>
           </div>
         )}

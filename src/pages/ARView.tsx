@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { resolveSharedProject, sharedSrcFromSearch } from '../share/tempShare'
+import { resolvePeerProject, resolveSharedProject, sharedPeerFromSearch, sharedSrcFromSearch } from '../share/tempShare'
 import * as THREE from 'three'
 import { MindARThree } from 'mind-ar/dist/mindar-image-three.prod.js'
 import { resolveProject } from '../store/projects'
@@ -35,12 +35,18 @@ export default function ARView() {
 
     ;(async () => {
       const src = sharedSrcFromSearch(location.search)
-      const resolved = src ? await resolveSharedProject(src) : await resolveProject(id)
+      const peerId = sharedPeerFromSearch(location.search)
+      if (peerId) setStatus('loading')
+      const resolved = peerId
+        ? await resolvePeerProject(peerId)
+        : src
+          ? await resolveSharedProject(src)
+          : await resolveProject(id)
       if (!resolved) {
         setStatus('error')
         setErrorMsg(
-          src
-            ? 'Shared project unavailable — temporary shares expire after about an hour.'
+          src || peerId
+            ? 'Shared project unavailable — make sure the sharing computer still has its editor tab open, then rescan the QR.'
             : 'Project not found at this address.',
         )
         return
@@ -309,7 +315,7 @@ export default function ARView() {
       {status === 'error' && !doc && (
         <div style={{ ...hintStyle, top: '40%' }}>
           <div className="card" style={{ maxWidth: 420, textAlign: 'center' }}>
-            <h3>Project not found</h3>
+            <h3>Couldn't load the project</h3>
             <p className="muted small">{errorMsg}</p>
             <Link to="/"><button>Home</button></Link>
           </div>
