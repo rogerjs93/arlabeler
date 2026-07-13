@@ -19,8 +19,12 @@ export interface PaintProps {
   mesh: THREE.Mesh
   /** Brush radius in normalized model units (drives the indicator sphere). */
   radius: number
-  /** Called for every stroke sample with the surface point and view ray. */
+  /** brush = radius painting along the surface; loop = lasso around a region. */
+  tool: 'brush' | 'loop'
+  /** Called for every brush stroke sample with the surface point and view ray. */
   onStroke: (worldPoint: THREE.Vector3, rayDir: THREE.Vector3) => void
+  /** Called when a loop is closed, with cell-space NDC polygon + that cell's camera. */
+  onLasso: (polygon: { x: number; y: number }[], camera: THREE.Camera) => void
 }
 
 export interface PickResult {
@@ -307,11 +311,70 @@ function MultiViewRenderer({
 
     let painting = false
 
+    // ---- loop (lasso) state: cell-space NDC points + CSS-pixel trail ----
+    let lasso: { cell: number; ndc: { x: number; y: number }[]; px: { x: number; y: number }[] } | null = null
+    let overlay: HTMLCanvasElement | null = null
+
+    const cellNdc = (e: PointerEvent, cell: number) => {
+      const rect = el.getBoundingClientRect()
+      const col = cell % 2
+      const row = cell < 2 ? 0 : 1
+      const fx = THREE.MathUtils.clamp(((e.clientX - rect.left) / rect.width - col * 0.5) * 2, 0, 1)
+      const fy = THREE.MathUtils.clamp(((e.clientY - rect.top) / rect.height - row * 0.5) * 2, 0, 1)
+      return { x: fx * 2 - 1, y: -(fy * 2 - 1) }
+    }
+
+    const drawLasso = () => {
+      if (!overlay || !lasso) return
+      const ctx = overlay.getContext('2d')!
+      ctx.clearRect(0, 0, overlay.width, overlay.height)
+      if (lasso.px.length < 2) return
+      ctx.strokeStyle = '#4cc9ff'
+      ctx.lineWidth = 2
+      ctx.setLineDash([6, 4])
+      ctx.beginPath()
+      ctx.moveTo(lasso.px[0].x, lasso.px[0].y)
+      for (const p of lasso.px) ctx.lineTo(p.x, p.y)
+      ctx.stroke()
+    }
+
+    const endLasso = (apply: boolean) => {
+      if (!lasso) return
+      const { cell, ndc } = lasso
+      lasso = null
+      if (overlay) {
+        overlay.remove()
+        overlay = null
+      }
+      if (apply && ndc.length >= 3 && paintRef.current) {
+        const rect = el.getBoundingClientRect()
+        applyCamera(cell, rect.width / rect.height)
+        cams[cell].updateMatrixWorld()
+        paintRef.current.onLasso(ndc, cams[cell])
+      }
+    }
+
     const onDown = (e: PointerEvent) => {
       const { cell } = cellAt(e)
       if (modeRef.current === 'paint' && e.button === 0) {
-        painting = true
         try { el.setPointerCapture(e.pointerId) } catch { /* synthetic or stale pointer */ }
+        if (paintRef.current?.tool === 'loop') {
+          const rect = el.getBoundingClientRect()
+          overlay = document.createElement('canvas')
+          overlay.width = rect.width
+          overlay.height = rect.height
+          Object.assign(overlay.style, {
+            position: 'absolute', inset: '0', pointerEvents: 'none', zIndex: '5',
+          } as CSSStyleDeclaration)
+          el.parentElement?.appendChild(overlay)
+          lasso = {
+            cell,
+            ndc: [cellNdc(e, cell)],
+            px: [{ x: e.clientX - rect.left, y: e.clientY - rect.top }],
+          }
+          return
+        }
+        painting = true
         const hit = paintHit(e)
         if (hit) paintRef.current?.onStroke(hit.point, hit.dir)
         return // left button paints; navigation stays on middle/shift
@@ -322,8 +385,15 @@ function MultiViewRenderer({
     }
 
     const onMove = (e: PointerEvent) => {
+      if (lasso && e.buttons & 1) {
+        const rect = el.getBoundingClientRect()
+        lasso.ndc.push(cellNdc(e, lasso.cell))
+        lasso.px.push({ x: e.clientX - rect.left, y: e.clientY - rect.top })
+        drawLasso()
+        return
+      }
       // brush indicator + stroke sampling in paint mode
-      if (modeRef.current === 'paint' && paintRef.current) {
+      if (modeRef.current === 'paint' && paintRef.current?.tool === 'brush') {
         const hit = paintHit(e)
         brush.visible = !!hit
         if (hit) {
@@ -364,6 +434,11 @@ function MultiViewRenderer({
     }
 
     const onUp = (e: PointerEvent) => {
+      if (lasso) {
+        endLasso(true)
+        try { el.releasePointerCapture(e.pointerId) } catch { /* not captured */ }
+        return
+      }
       if (painting) {
         painting = false
         try { el.releasePointerCapture(e.pointerId) } catch { /* not captured */ }
@@ -420,6 +495,7 @@ function MultiViewRenderer({
     el.addEventListener('pointerup', onUp)
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => {
+      endLasso(false)
       el.removeEventListener('pointerdown', onDown)
       el.removeEventListener('pointermove', onMove)
       el.removeEventListener('pointerup', onUp)

@@ -22,6 +22,25 @@ three.js. Static SPA — deploys to GitHub Pages.
 4. **Print & view** — print the card, scan its QR with a phone's normal camera; the
    browser opens the AR viewer, point at the card, and the labeled model appears.
 
+### Segmenting whole models
+
+Single-mesh models (scans, STL) can be split into "virtual parts" in the editor's
+**Paint segments** mode: a **brush** (radius painting along the surface) and a
+**loop** tool (trace around a region — everything inside is selected, more
+precise). Masks bake into real parts, so they highlight, isolate, explode and
+bind to labels like native parts.
+
+### Getting a project onto a phone
+
+Projects are stored in the browser (IndexedDB) — other devices can't see them.
+Two ways to view on a phone:
+
+- **Share to phone (temporary)** — one click in Marker & Export uploads the
+  bundle to tmpfiles.org (public temp host, ~60 min) and shows a QR the phone
+  scans. Explicit opt-in; nothing is uploaded until you press the button.
+- **Publish (permanent)** — export the bundle zip, unzip into
+  `public/projects/<id>/`, list it in `projects/index.json`, rebuild + push.
+
 ### Viewer interactions
 
 Pinch to scale, drag to rotate, tap a pin or part for its description + highlight.

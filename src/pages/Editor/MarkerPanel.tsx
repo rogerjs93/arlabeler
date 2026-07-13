@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import QRCode from 'qrcode'
 import type { ARProject, TargetDef } from '../../types'
 import { generateSingleCard, generateTentCard, generateMultiCardSet, canvasToBlob } from '../../marker/cardGenerator'
 import { compileMindFile } from '../../marker/compileMind'
 import { exportBundle, downloadBlob } from '../../marker/exportBundle'
+import { buildShareZip, uploadTemp } from '../../share/tempShare'
 import { loadBlob, saveBlob } from '../../store/projects'
 
 type MarkerMode = 'single' | 'tent' | 'multicard'
@@ -35,6 +37,8 @@ export default function MarkerPanel({
   const [progress, setProgress] = useState(0)
   const [message, setMessage] = useState('')
   const [cardUrl, setCardUrl] = useState<string>()
+  const [share, setShare] = useState<{ state: 'idle' | 'working' | 'done' | 'error'; url?: string; error?: string }>({ state: 'idle' })
+  const shareQrRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
     localStorage.setItem('arlabeler:baseUrl', baseUrl)
@@ -115,6 +119,25 @@ export default function MarkerPanel({
     }
   }
 
+  const shareToPhone = async () => {
+    setShare({ state: 'working' })
+    try {
+      const zip = await buildShareZip(doc)
+      const dlUrl = await uploadTemp(zip)
+      const shareUrl = `${baseUrl.replace(/\/?$/, '/')}#/view/shared?src=${encodeURIComponent(dlUrl)}`
+      setShare({ state: 'done', url: shareUrl })
+    } catch (e) {
+      setShare({ state: 'error', error: String(e) })
+    }
+  }
+
+  // draw the share QR once its canvas is mounted
+  useEffect(() => {
+    if (share.state === 'done' && share.url && shareQrRef.current) {
+      QRCode.toCanvas(shareQrRef.current, share.url, { width: 240, margin: 2 })
+    }
+  }, [share])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <section>
@@ -175,6 +198,37 @@ export default function MarkerPanel({
       {phase !== 'idle' && phase !== 'working' && (
         <div className="small" style={{ color: phase === 'error' ? 'var(--danger)' : 'var(--ok)' }}>{message}</div>
       )}
+
+      <section>
+        <h3 className="small" style={sectionTitle}>Share to phone (temporary)</h3>
+        <p className="small muted" style={{ margin: '0 0 8px' }}>
+          Projects are saved in this browser only — another device can't see them. This uploads the
+          project (model + labels + marker) to tmpfiles.org, a public temporary host, for about
+          <strong> 60 minutes</strong>, and shows a QR your phone can scan. For a permanent link,
+          export the bundle and publish it to the site.
+        </p>
+        <button onClick={shareToPhone} disabled={share.state === 'working'}>
+          {share.state === 'working' ? 'Uploading…' : '📱 Share to phone (1 h)'}
+        </button>
+        {share.state === 'error' && (
+          <div className="small" style={{ color: 'var(--danger)', marginTop: 6 }}>
+            Share failed: {share.error} — the temp-host service may be unreachable; try again or publish instead.
+          </div>
+        )}
+        {share.state === 'done' && share.url && (
+          <div style={{ marginTop: 8, textAlign: 'center' }}>
+            <canvas ref={shareQrRef} style={{ background: '#fff', borderRadius: 8, padding: 4 }} />
+            <div className="small muted" style={{ wordBreak: 'break-all', marginTop: 4 }}>{share.url}</div>
+            <button className="small" style={{ marginTop: 6 }} onClick={() => navigator.clipboard.writeText(share.url!)}>
+              copy link
+            </button>
+            <p className="small muted" style={{ marginTop: 6 }}>
+              Scan this QR with the phone to open the AR viewer, then point the phone at the printed
+              (or on-screen) marker card below. Expires in ~1 hour.
+            </p>
+          </div>
+        )}
+      </section>
 
       {cardUrl && (
         <section>

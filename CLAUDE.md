@@ -58,6 +58,17 @@ paint mode reloads without segmentation; apply/cancel reload with it. Logic has
 a Node test pattern (esbuild-bundle `segmentation.ts` with `--external:three`,
 run against a SphereGeometry — see git history of the verify flow).
 
+## Temporary share (no backend)
+
+"Share to phone" (`src/share/tempShare.ts`) zips the bundle and uploads to
+tmpfiles.org (~60 min retention) on explicit user click; the QR opens
+`#/view/shared?src=<zip url>` and ARView/Preview stream+unzip it (JSZip). The
+`?src=` loader also accepts exported publish bundles (folder-wrapped zips).
+Note: automated probing of the temp host from agent tooling is blocked by the
+sandbox (exfil guard) — the upload path is user-triggered and must be smoke
+-tested by a human click; everything around it (zip build, unzip, resolve) is
+verifiable locally.
+
 ## Headless verification (embedded browser pane)
 
 The automation pane's document is `hidden`: native rAF **never fires** and

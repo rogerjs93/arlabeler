@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import type { Label } from '../types'
+import type { IntroStyle, Label } from '../types'
 import type { LoadedModel, PartInfo } from '../loaders/loadModel'
 import { createPin, disposePin, updatePin, type PinObject } from './pins'
 
@@ -36,6 +36,18 @@ const easeOutBack = (t: number) => {
   return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2)
 }
 
+const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3)
+
+/** Total entrance duration per style, seconds. */
+const INTRO_DURATION: Record<IntroStyle, number> = {
+  assemble: 1.1,
+  burst: 1.2,
+  fade: 1.4,
+  cascade: 1.5,
+  spiral: 1.6,
+  connections: 1.9,
+}
+
 export class EffectsController {
   readonly model: LoadedModel
   readonly labels: Label[]
@@ -59,11 +71,15 @@ export class EffectsController {
   /** Camera distance in marker units; viewer feeds real pose, preview a slider. */
   cameraDistance = 2.5
   clipPaused = false
+  /** Entrance animation style; set before playEntrance(). */
+  entranceStyle: IntroStyle = 'assemble'
 
   private entranceT = -1 // -1 = not playing, else 0..1
   private time = 0
   private focusedMesh?: string
   private baseRotationY: number
+  private connectionLines?: THREE.LineSegments
+  private tmpV = new THREE.Vector3()
 
   constructor(model: LoadedModel, labels: Label[]) {
     this.model = model
@@ -103,10 +119,54 @@ export class EffectsController {
     })
 
     this.rebuildPins()
+    this.buildConnectionLines()
 
     if (model.animations.length > 0) {
       this.mixer = new THREE.AnimationMixer(model.root)
     }
+  }
+
+  /**
+   * Glowing links between part centroids (greedy nearest-neighbor tree), shown
+   * during the 'connections' intro to give a sense of how parts relate.
+   */
+  private buildConnectionLines() {
+    const parts = this.model.parts
+    if (parts.length < 2) return
+    const connected = [0]
+    const remaining = new Set<number>()
+    for (let i = 1; i < parts.length; i++) remaining.add(i)
+    const points: THREE.Vector3[] = []
+    while (remaining.size > 0) {
+      let bi = -1
+      let bj = -1
+      let bd = Infinity
+      for (const j of remaining) {
+        for (const i of connected) {
+          const d = parts[i].centroid.distanceToSquared(parts[j].centroid)
+          if (d < bd) {
+            bd = d
+            bi = i
+            bj = j
+          }
+        }
+      }
+      points.push(parts[bi].centroid.clone(), parts[bj].centroid.clone())
+      connected.push(bj)
+      remaining.delete(bj)
+    }
+    const geo = new THREE.BufferGeometry().setFromPoints(points)
+    const mat = new THREE.LineBasicMaterial({
+      color: 0x4cc9ff,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+    this.connectionLines = new THREE.LineSegments(geo, mat)
+    this.connectionLines.visible = false
+    this.connectionLines.renderOrder = 995
+    this.model.root.add(this.connectionLines)
   }
 
   /** (Re)build pin sprites from current labels — editor calls this after edits. */
@@ -163,8 +223,18 @@ export class EffectsController {
 
     // entrance
     if (this.entranceT >= 0) {
-      this.entranceT = Math.min(1, this.entranceT + dt / 1.1)
+      this.entranceT = Math.min(1, this.entranceT + dt / INTRO_DURATION[this.entranceStyle])
       if (this.entranceT >= 1) this.entranceT = -1
+    }
+
+    // connection links glow during the 'connections' intro
+    if (this.connectionLines) {
+      const active = this.entranceStyle === 'connections' && this.entranceT >= 0
+      this.connectionLines.visible = active
+      if (active) {
+        ;(this.connectionLines.material as THREE.LineBasicMaterial).opacity =
+          Math.pow(Math.sin(Math.PI * this.entranceT), 0.7) * 0.9
+      }
     }
 
     // idle float + turntable on the wrapper
@@ -205,10 +275,47 @@ export class EffectsController {
       const ex = this.explode
       mesh.position.copy(p.basePosition).addScaledVector(p.explodeDir, ex * 0.9)
       let scale = 1
+      let alpha = 1
       if (this.entranceT >= 0) {
         const t = THREE.MathUtils.clamp((this.entranceT - p.entranceDelay) / 0.55, 0, 1)
-        scale = t === 0 ? 0.0001 : easeOutBack(t)
-        mesh.position.addScaledVector(p.explodeDir, (1 - t) * 0.6)
+        switch (this.entranceStyle) {
+          case 'assemble':
+            scale = t === 0 ? 0.0001 : easeOutBack(t)
+            mesh.position.addScaledVector(p.explodeDir, (1 - t) * 0.6)
+            break
+          case 'burst': {
+            // gathered at the center, then explodes outward with overshoot
+            const e = t === 0 ? 0 : easeOutBack(t)
+            mesh.position.addScaledVector(p.explodeDir, -(1 - e))
+            scale = t === 0 ? 0.0001 : Math.min(1, 0.25 + 0.75 * e)
+            break
+          }
+          case 'fade':
+            alpha = easeOutCubic(t)
+            mesh.position.y -= (1 - easeOutCubic(t)) * 0.07
+            break
+          case 'cascade':
+            alpha = Math.min(1, t * 2.5)
+            mesh.position.y += (1 - easeOutCubic(t)) * 0.9
+            break
+          case 'spiral': {
+            const e = easeOutCubic(t)
+            const ang = (1 - e) * Math.PI * 1.5
+            const c = Math.cos(ang)
+            const s = Math.sin(ang)
+            const d = p.explodeDir
+            const r = 1 + (1 - e) * 0.8 // swirl in from slightly outside
+            this.tmpV.set(d.x * c - d.z * s, d.y, d.x * s + d.z * c).multiplyScalar(r).sub(d)
+            mesh.position.add(this.tmpV)
+            alpha = Math.min(1, t * 2)
+            scale = 0.5 + 0.5 * e
+            break
+          }
+          case 'connections':
+            alpha = easeOutCubic(t)
+            scale = t === 0 ? 0.0001 : 0.85 + 0.15 * easeOutBack(t)
+            break
+        }
       }
       mesh.scale.copy(p.baseScale).multiplyScalar(scale)
 
@@ -219,7 +326,7 @@ export class EffectsController {
       if (this.isolatedMesh === p.info.name) mode = 'none'
       if (this.highlightedMesh === p.info.name) mode = 'highlight'
       const focusGlow = this.focusedMesh === p.info.name && !this.highlightedMesh && mode === 'none'
-      this.applyMaterialMode(p, mode, focusGlow)
+      this.applyMaterialMode(p, mode, focusGlow, alpha)
     }
 
     // pins: LOD by camera distance, tour dimming, focus emphasis
@@ -240,7 +347,7 @@ export class EffectsController {
     if (this.mixer && !this.clipPaused) this.mixer.update(dt)
   }
 
-  private applyMaterialMode(p: PartRuntime, mode: HighlightMode, focusGlow: boolean) {
+  private applyMaterialMode(p: PartRuntime, mode: HighlightMode, focusGlow: boolean, alpha = 1) {
     const mats = Array.isArray(p.material) ? p.material : [p.material]
     for (const m of mats) {
       const std = m as THREE.MeshStandardMaterial
@@ -248,6 +355,11 @@ export class EffectsController {
         m.transparent = true
         m.opacity = 0.16
         m.depthWrite = false
+      } else if (alpha < 1) {
+        // entrance fade
+        m.transparent = true
+        m.opacity = (m.userData.__origOpacity ?? 1) * Math.max(alpha, 0.001)
+        m.depthWrite = alpha > 0.6
       } else {
         m.transparent = m.userData.__origTransparent ?? false
         m.opacity = m.userData.__origOpacity ?? 1
@@ -286,5 +398,9 @@ export class EffectsController {
   dispose() {
     for (const p of this.pins) disposePin(p)
     this.mixer?.stopAllAction()
+    if (this.connectionLines) {
+      this.connectionLines.geometry.dispose()
+      ;(this.connectionLines.material as THREE.Material).dispose()
+    }
   }
 }

@@ -93,7 +93,7 @@ export interface ResolvedProject {
   doc: ARProject
   modelUrl: string
   mindUrl?: string
-  source: 'static' | 'local'
+  source: 'static' | 'local' | 'shared'
 }
 
 export async function resolveProject(id: string): Promise<ResolvedProject | undefined> {

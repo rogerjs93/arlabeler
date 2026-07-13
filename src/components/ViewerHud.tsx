@@ -75,6 +75,7 @@ export default function ViewerHud({
         {hasClips && (
           <button onClick={() => setClipPaused(!clipPaused)}>{clipPaused ? '▶ Anim' : '⏸ Anim'}</button>
         )}
+        <button onClick={() => controller?.playEntrance()} title="Replay the intro animation">↻ Intro</button>
         {controller?.isolatedMesh && (
           <button onClick={() => controller.setIsolated(undefined)} style={activeBtn}>Un-isolate</button>
         )}

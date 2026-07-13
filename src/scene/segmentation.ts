@@ -165,6 +165,46 @@ export class PaintSession {
     if (changed) this.colorAttr.needsUpdate = true
   }
 
+  /**
+   * Loop/lasso selection: assign every face whose centroid projects inside the
+   * screen-space polygon (NDC coords of one viewport cell) to `segId`. More
+   * precise than the brush — trace once around a region to cut it out.
+   * Unless `through`, faces looking away from the camera are skipped.
+   */
+  lassoPaint(
+    polygon: { x: number; y: number }[],
+    camera: THREE.Camera,
+    segId: number,
+    segments: SegmentDef[],
+    through = false,
+  ) {
+    if (polygon.length < 3) return
+    const map = colorMap(segments)
+    const color = map.get(segId) ?? WHITE
+    const viewDir = new THREE.Vector3()
+    camera.getWorldDirection(viewDir)
+    const v = new THREE.Vector3()
+    let changed = false
+    for (let f = 0; f < this.faceCount; f++) {
+      if (!through) {
+        const dot =
+          this.normals[f * 3] * viewDir.x +
+          this.normals[f * 3 + 1] * viewDir.y +
+          this.normals[f * 3 + 2] * viewDir.z
+        if (dot > 0) continue
+      }
+      v.set(this.centroids[f * 3], this.centroids[f * 3 + 1], this.centroids[f * 3 + 2]).project(camera)
+      if (v.z > 1 || v.z < -1) continue
+      if (!pointInPolygon(v.x, v.y, polygon)) continue
+      if (this.faceSeg[f] !== segId) {
+        this.faceSeg[f] = segId
+        this.setFaceColor(f, color)
+        changed = true
+      }
+    }
+    if (changed) this.colorAttr.needsUpdate = true
+  }
+
   /** Unassign every face of a segment (when the segment is deleted). */
   clearSegment(segId: number, segments: SegmentDef[]) {
     for (let f = 0; f < this.faceCount; f++) {
@@ -181,6 +221,19 @@ export class PaintSession {
     }
     return m
   }
+}
+
+/** Ray-casting point-in-polygon test (even-odd rule). */
+function pointInPolygon(x: number, y: number, poly: { x: number; y: number }[]): boolean {
+  let inside = false
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x
+    const yi = poly[i].y
+    const xj = poly[j].x
+    const yj = poly[j].y
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside
+  }
+  return inside
 }
 
 /**

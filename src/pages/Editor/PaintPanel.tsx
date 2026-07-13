@@ -7,6 +7,7 @@ export interface PaintState {
   session: PaintSession
   segments: SegmentDef[]
   activeId: number
+  tool: 'brush' | 'loop'
   radius: number
   erase: boolean
   through: boolean
@@ -124,7 +125,24 @@ export default function PaintPanel({
       </section>
 
       <section>
-        <h3 className="small" style={sectionTitle}>Brush</h3>
+        <h3 className="small" style={sectionTitle}>Tool</h3>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          <button
+            style={{ flex: 1, ...(paint.tool === 'brush' ? activeTool : {}) }}
+            onClick={() => onChange({ ...paint, tool: 'brush' })}
+            title="Drag along the surface to paint within the brush radius"
+          >
+            🖌 Brush
+          </button>
+          <button
+            style={{ flex: 1, ...(paint.tool === 'loop' ? activeTool : {}) }}
+            onClick={() => onChange({ ...paint, tool: 'loop' })}
+            title="Trace a loop around a region — everything inside is selected (precise)"
+          >
+            ◯ Loop
+          </button>
+        </div>
+        {paint.tool === 'brush' && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <span className="small muted" style={{ width: 70 }}>Size {paint.radius.toFixed(2)}</span>
           <input
@@ -137,6 +155,12 @@ export default function PaintPanel({
             style={{ flex: 1 }}
           />
         </div>
+        )}
+        {paint.tool === 'loop' && (
+          <p className="small muted" style={{ margin: '0 0 6px' }}>
+            Draw a closed line around the region in any view; every face inside the loop is assigned.
+          </p>
+        )}
         <div style={{ display: 'flex', gap: 12 }}>
           <label className="small">
             <input
@@ -169,3 +193,4 @@ export default function PaintPanel({
 }
 
 const sectionTitle: React.CSSProperties = { textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-dim)', marginBottom: 8 }
+const activeTool: React.CSSProperties = { borderColor: 'var(--accent)', color: 'var(--accent)' }

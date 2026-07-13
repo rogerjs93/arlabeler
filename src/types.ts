@@ -12,6 +12,18 @@ export interface Label {
   rank: number
 }
 
+/** Entrance animation styles for the model when the marker is found. */
+export type IntroStyle = 'assemble' | 'burst' | 'fade' | 'cascade' | 'spiral' | 'connections'
+
+export const INTRO_STYLES: { id: IntroStyle; label: string; description: string }[] = [
+  { id: 'assemble', label: 'Assemble', description: 'Parts fly together from an exploded state' },
+  { id: 'burst', label: 'Burst', description: 'Explodes outward from the center, then settles' },
+  { id: 'fade', label: 'Fade & rise', description: 'Parts fade in one after another, rising softly' },
+  { id: 'cascade', label: 'Cascade', description: 'Parts drop in from above in sequence' },
+  { id: 'spiral', label: 'Spiral', description: 'Parts swirl in around the model axis' },
+  { id: 'connections', label: 'Connections', description: 'Parts fade in linked by glowing lines' },
+]
+
 /** A painted segment ("virtual part") of a single mesh. */
 export interface SegmentDef {
   id: number
@@ -74,6 +86,8 @@ export interface ARProject {
   cardOrientation?: 'flat' | 'upright'
   /** Brush-painted masks per mesh name — split into real parts at load time. */
   segmentation?: Record<string, MeshSegmentation>
+  /** Entrance animation played when the marker is found. Default 'assemble'. */
+  introStyle?: IntroStyle
   attribution?: string
   createdAt: number
   updatedAt: number

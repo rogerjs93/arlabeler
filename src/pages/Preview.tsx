@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
+import { resolveSharedProject, sharedSrcFromSearch } from '../share/tempShare'
 import * as THREE from 'three'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls, ContactShadows } from '@react-three/drei'
@@ -17,6 +18,7 @@ import { PollingResizeObserver, needsPollingResize } from '../utils/pollingResiz
  */
 export default function Preview() {
   const { id } = useParams<{ id: string }>()
+  const location = useLocation()
   const [resolved, setResolved] = useState<ResolvedProject | null>(null)
   const [model, setModel] = useState<LoadedModel | null>(null)
   const [error, setError] = useState<string>()
@@ -28,9 +30,14 @@ export default function Preview() {
     if (!id) return
     let cancelled = false
     ;(async () => {
-      const r = await resolveProject(id)
+      const src = sharedSrcFromSearch(location.search)
+      const r = src ? await resolveSharedProject(src) : await resolveProject(id)
       if (!r) {
-        setError('Project not found. It may only exist in another browser, or has not been published yet.')
+        setError(
+          src
+            ? 'Shared project unavailable — temporary shares expire after about an hour. Ask for a fresh share link.'
+            : 'Project not found. It may only exist in another browser, or has not been published yet.',
+        )
         return
       }
       const format = formatFromFileName(r.doc.model)
@@ -48,13 +55,14 @@ export default function Preview() {
       controllerRef.current?.dispose()
       controllerRef.current = null
     }
-  }, [id])
+  }, [id, location.search])
 
   const controller = useMemo(() => {
     if (!model || !resolved) return null
     const c = new EffectsController(model, resolved.doc.labels)
     controllerRef.current = c
     if (import.meta.env.DEV) (window as unknown as { __ar: EffectsController }).__ar = c
+    c.entranceStyle = resolved.doc.introStyle ?? 'assemble'
     if (resolved.doc.animation?.autoplay) c.playClip(resolved.doc.animation.clip)
     c.playEntrance()
     return c

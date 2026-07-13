@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { ARProject, Label } from '../../types'
-import { DEFAULT_TRANSFORM, FLAT_TRANSFORM, LABEL_COLORS, newLabelId, newProjectId } from '../../types'
+import { DEFAULT_TRANSFORM, FLAT_TRANSFORM, INTRO_STYLES, LABEL_COLORS, newLabelId, newProjectId } from '../../types'
 import {
   loadBlob,
   loadProjectDoc,
@@ -144,6 +144,7 @@ export default function Editor() {
       session,
       segments,
       activeId: segments[0].id,
+      tool: 'brush',
       radius: 0.08,
       erase: false,
       through: false,
@@ -198,6 +199,17 @@ export default function Editor() {
         if (!p) return p
         p.session.paint(point, p.radius, p.erase ? 0 : p.activeId, p.segments, dir, p.through)
         return p
+      })
+    },
+    [],
+  )
+
+  const onLasso = useCallback(
+    (polygon: { x: number; y: number }[], camera: import('three').Camera) => {
+      setPaint((p) => {
+        if (!p) return p
+        p.session.lassoPaint(polygon, camera, p.erase ? 0 : p.activeId, p.segments, p.through)
+        return { ...p } // re-render so the face counters refresh after a loop
       })
     },
     [],
@@ -273,7 +285,11 @@ export default function Editor() {
             orientation={doc.cardOrientation ?? 'upright'}
             mode={mode}
             onPick={onViewportPick}
-            paint={mode === 'paint' && paint ? { mesh: paint.session.mesh, radius: paint.radius, onStroke } : null}
+            paint={
+              mode === 'paint' && paint
+                ? { mesh: paint.session.mesh, radius: paint.radius, tool: paint.tool, onStroke, onLasso }
+                : null
+            }
           />
         </div>
 
@@ -405,6 +421,19 @@ export default function Editor() {
                     </label>
                   </div>
                 )}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+                  <span className="small muted">Intro animation</span>
+                  <select
+                    value={doc.introStyle ?? 'assemble'}
+                    onChange={(e) => updateDoc({ introStyle: e.target.value as ARProject['introStyle'] })}
+                    style={{ flex: 1, minWidth: 0 }}
+                    title={INTRO_STYLES.find((s) => s.id === (doc.introStyle ?? 'assemble'))?.description}
+                  >
+                    {INTRO_STYLES.map((s) => (
+                      <option key={s.id} value={s.id} title={s.description}>{s.label} — {s.description}</option>
+                    ))}
+                  </select>
+                </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <span className="small muted">Tour auto-advance</span>
                   <select
@@ -417,6 +446,9 @@ export default function Editor() {
                     <option value={12}>12 s</option>
                   </select>
                 </div>
+                <p className="small muted" style={{ margin: '6px 0 0' }}>
+                  Preview the intro from the 3D preview page (↻ Intro button).
+                </p>
               </section>
             </>
           ) : (

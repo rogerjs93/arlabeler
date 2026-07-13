@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
+import { resolveSharedProject, sharedSrcFromSearch } from '../share/tempShare'
 import * as THREE from 'three'
 import { MindARThree } from 'mind-ar/dist/mindar-image-three.prod.js'
 import { resolveProject } from '../store/projects'
@@ -18,6 +19,7 @@ type Status = 'loading' | 'starting' | 'scanning' | 'tracking' | 'error' | 'noma
  */
 export default function ARView() {
   const { id } = useParams<{ id: string }>()
+  const location = useLocation()
   const containerRef = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState<Status>('loading')
   const [errorMsg, setErrorMsg] = useState('')
@@ -32,10 +34,15 @@ export default function ARView() {
     const container = containerRef.current
 
     ;(async () => {
-      const resolved = await resolveProject(id)
+      const src = sharedSrcFromSearch(location.search)
+      const resolved = src ? await resolveSharedProject(src) : await resolveProject(id)
       if (!resolved) {
         setStatus('error')
-        setErrorMsg('Project not found at this address.')
+        setErrorMsg(
+          src
+            ? 'Shared project unavailable — temporary shares expire after about an hour.'
+            : 'Project not found at this address.',
+        )
         return
       }
       setDoc(resolved.doc)
@@ -102,8 +109,11 @@ export default function ARView() {
       const anchors: { group: THREE.Group; visibleRef: { v: boolean } }[] = []
       let primary: EffectsController
 
+      const introStyle = resolved.doc.introStyle ?? 'assemble'
+
       if (!isMultiCard) {
         primary = new EffectsController(model, resolved.doc.labels)
+        primary.entranceStyle = introStyle
         controllers.push(primary)
         const content = new THREE.Group()
         content.add(primary.model.root, primary.pinsGroup)
@@ -168,6 +178,7 @@ export default function ARView() {
             { root: cloneRoot, parts: visibleParts, animations: [], format: model.format },
             cardLabels,
           )
+          ctl.entranceStyle = introStyle
           ctl.idleFloat = false
           controllers.push(ctl)
 
@@ -260,7 +271,7 @@ export default function ARView() {
       stopRef.current()
       stopRef.current = () => {}
     }
-  }, [id])
+  }, [id, location.search])
 
   return (
     <div style={{ position: 'relative', height: '100%', background: '#000' }}>
@@ -291,7 +302,7 @@ export default function ARView() {
                 ? 'Generate the marker card in the editor first.'
                 : errorMsg}
             </p>
-            <Link to={`/preview/${id}`}><button className="primary">Open 3D preview instead</button></Link>
+            <Link to={`/preview/${id}${location.search}`}><button className="primary">Open 3D preview instead</button></Link>
           </div>
         </div>
       )}
