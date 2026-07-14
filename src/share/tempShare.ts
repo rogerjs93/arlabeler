@@ -27,16 +27,18 @@ interface SharePayload {
 }
 
 /**
- * ICE config: Google STUN plus Open Relay's free public TURN (metered.ca).
- * TURN lets the transfer work even when phone and desktop are on different
- * networks behind restrictive NATs; same-WiFi never needs it.
+ * ICE config: STUN only. Same-network devices connect via host candidates and
+ * most home NATs via STUN. There is deliberately no TURN: the old "openrelay"
+ * free TURN is dead (probed: no relay candidates, just added latency). If
+ * cross-network sharing behind strict NATs (e.g. phone on mobile data with
+ * carrier CGNAT) is ever needed, add an account-based TURN service here.
  */
 const PEER_CONFIG = {
   config: {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun.cloudflare.com:3478' },
     ],
   },
 }
@@ -44,8 +46,47 @@ const PEER_CONFIG = {
 export interface ShareHost {
   /** URL to encode in the QR (viewer route with ?peer=). */
   url: string
-  /** Number of devices served so far (updates via onUpdate). */
   stop: () => void
+}
+
+/**
+ * The active share lives at module level so it survives editor tab switches
+ * and route changes — it only ends when the user starts a new share, clicks
+ * stop, or closes/reloads the whole page.
+ */
+let activeShare: { docId: string; host: ShareHost; lastStatus: string } | null = null
+const statusListeners = new Set<(s: string) => void>()
+
+function pushStatus(s: string) {
+  if (activeShare) activeShare.lastStatus = s
+  for (const cb of statusListeners) cb(s)
+}
+
+/** Start sharing `doc` (stops any previous share). */
+export async function startSharing(doc: ARProject, baseUrl: string): Promise<ShareHost> {
+  activeShare?.host.stop()
+  activeShare = null
+  const host = await hostShare(doc, baseUrl, pushStatus)
+  activeShare = { docId: doc.id, host, lastStatus: 'waiting for the phone to connect…' }
+  pushStatus(activeShare.lastStatus)
+  return host
+}
+
+export function stopSharing() {
+  activeShare?.host.stop()
+  activeShare = null
+  pushStatus('sharing stopped')
+}
+
+/** Current share (if any) so a remounted panel can re-show the QR. */
+export function getActiveShare(): { docId: string; url: string; lastStatus: string } | null {
+  return activeShare ? { docId: activeShare.docId, url: activeShare.host.url, lastStatus: activeShare.lastStatus } : null
+}
+
+/** Subscribe to live status updates; returns an unsubscribe. */
+export function onShareStatus(cb: (s: string) => void): () => void {
+  statusListeners.add(cb)
+  return () => statusListeners.delete(cb)
 }
 
 /** Editor side: host the current project over WebRTC. Resolves once the peer is ready. */
@@ -79,6 +120,7 @@ export async function hostShare(
   })
 
   peer.on('connection', (conn: DataConnection) => {
+    onUpdate('phone connecting…')
     conn.on('open', () => {
       onUpdate(`sending to device ${served + 1}…`)
       conn.send({ type: 'project', doc: payload.doc, model: payload.model, mind: payload.mind })
@@ -87,10 +129,23 @@ export async function hostShare(
       const msg = d as { type?: string }
       if (msg?.type === 'received') {
         served++
-        onUpdate(`delivered to ${served} device${served === 1 ? '' : 's'} — keep this tab open to share again`)
+        onUpdate(`delivered to ${served} device${served === 1 ? '' : 's'} — keep this page open to share again`)
         conn.close()
       }
     })
+    conn.on('iceStateChanged', (state) => {
+      if (state === 'failed') onUpdate('a phone tried to connect but the direct link failed (network blocks peer traffic?)')
+    })
+  })
+  // background-tab throttling can drop the signaling socket; reconnect so the
+  // QR keeps working while the user does other things
+  peer.on('disconnected', () => {
+    onUpdate('reconnecting to signaling…')
+    try {
+      peer.reconnect()
+    } catch {
+      /* destroyed */
+    }
   })
   peer.on('error', (e) => onUpdate(`share error: ${e.message ?? e}`))
 
@@ -126,6 +181,17 @@ export async function resolvePeerProject(
         25000,
       )
       conn.on('open', () => onStatus?.('connected — receiving the project…'))
+      conn.on('iceStateChanged', (state) => {
+        if (state === 'checking') onStatus?.('linking to the sharing computer… (negotiating route)')
+        if (state === 'failed') {
+          clearTimeout(timer)
+          reject(
+            new Error(
+              'Direct connection failed — the networks block peer traffic. Put the phone on the same Wi-Fi as the computer and try again.',
+            ),
+          )
+        }
+      })
       conn.on('data', (d) => {
         const msg = d as { type?: string } & SharePayload
         if (msg?.type === 'project' && msg.doc && msg.model) {

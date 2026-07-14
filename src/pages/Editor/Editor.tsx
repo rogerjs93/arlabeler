@@ -12,6 +12,7 @@ import {
 } from '../../store/projects'
 import { loadModel, formatFromFileName, type LoadedModel } from '../../loaders/loadModel'
 import { EffectsController } from '../../scene/effects'
+import { getActiveShare, onShareStatus } from '../../share/tempShare'
 import { PaintSession, facesToRuns } from '../../scene/segmentation'
 import QuadViewport, { type EditorMode, type PickResult } from './QuadViewport'
 import MarkerPanel from './MarkerPanel'
@@ -28,8 +29,12 @@ export default function Editor() {
   const [mode, setMode] = useState<EditorMode>('select')
   const [tab, setTab] = useState<'labels' | 'marker'>('labels')
   const [paint, setPaint] = useState<PaintState | null>(null)
+  const [shareActive, setShareActive] = useState(() => !!getActiveShare())
   const saveTimer = useRef<number | undefined>(undefined)
   const modelBlobRef = useRef<Blob | null>(null)
+
+  // little topbar indicator so a running share is visible from any tab
+  useEffect(() => onShareStatus(() => setShareActive(!!getActiveShare())), [])
 
   // ---- load (cloning a static sample into a new local project if needed) ----
   useEffect(() => {
@@ -272,6 +277,11 @@ export default function Editor() {
         <button onClick={() => setTab('labels')} style={tab === 'labels' ? tabActive : undefined}>Model & Labels</button>
         <button onClick={() => setTab('marker')} style={tab === 'marker' ? tabActive : undefined}>Marker & Export</button>
         <span className="spacer" />
+        {shareActive && (
+          <span className="badge sample" title="A phone-share link is live — manage it in Marker & Export">
+            📱 sharing
+          </span>
+        )}
         <span className="muted small">saved locally</span>
         <Link to={`/preview/${doc.id}`}><button>3D preview</button></Link>
         <Link to={`/view/${doc.id}`}><button>AR view</button></Link>

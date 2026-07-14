@@ -4,7 +4,7 @@ import type { ARProject, TargetDef } from '../../types'
 import { generateSingleCard, generateTentCard, generateMultiCardSet, canvasToBlob } from '../../marker/cardGenerator'
 import { compileMindFile } from '../../marker/compileMind'
 import { exportBundle, downloadBlob } from '../../marker/exportBundle'
-import { hostShare, type ShareHost } from '../../share/tempShare'
+import { getActiveShare, onShareStatus, startSharing, stopSharing } from '../../share/tempShare'
 import { loadBlob, saveBlob } from '../../store/projects'
 
 type MarkerMode = 'single' | 'tent' | 'multicard'
@@ -37,12 +37,20 @@ export default function MarkerPanel({
   const [progress, setProgress] = useState(0)
   const [message, setMessage] = useState('')
   const [cardUrl, setCardUrl] = useState<string>()
-  const [share, setShare] = useState<{ state: 'idle' | 'working' | 'done' | 'error'; url?: string; error?: string; status?: string }>({ state: 'idle' })
+  const [share, setShare] = useState<{ state: 'idle' | 'working' | 'done' | 'error'; url?: string; error?: string; status?: string }>(() => {
+    // an earlier share keeps running across tab switches — re-show its QR
+    const active = getActiveShare()
+    return active && active.docId === doc.id
+      ? { state: 'done', url: active.url, status: active.lastStatus }
+      : { state: 'idle' }
+  })
   const shareQrRef = useRef<HTMLCanvasElement>(null)
-  const shareHostRef = useRef<ShareHost | null>(null)
 
-  // stop hosting when the panel unmounts
-  useEffect(() => () => shareHostRef.current?.stop(), [])
+  // live status updates from the running share (host keeps running on unmount)
+  useEffect(
+    () => onShareStatus((status) => setShare((s) => (s.state === 'done' ? { ...s, status } : s))),
+    [],
+  )
 
   useEffect(() => {
     localStorage.setItem('arlabeler:baseUrl', baseUrl)
@@ -125,16 +133,17 @@ export default function MarkerPanel({
 
   const shareToPhone = async () => {
     setShare({ state: 'working' })
-    shareHostRef.current?.stop()
     try {
-      const host = await hostShare(doc, baseUrl, (status) =>
-        setShare((s) => (s.state === 'done' ? { ...s, status } : s)),
-      )
-      shareHostRef.current = host
+      const host = await startSharing(doc, baseUrl)
       setShare({ state: 'done', url: host.url, status: 'waiting for the phone to connect…' })
     } catch (e) {
       setShare({ state: 'error', error: e instanceof Error ? e.message : String(e) })
     }
+  }
+
+  const stopShare = () => {
+    stopSharing()
+    setShare({ state: 'idle' })
   }
 
   // draw the share QR once its canvas is mounted
@@ -210,12 +219,18 @@ export default function MarkerPanel({
         <p className="small muted" style={{ margin: '0 0 8px' }}>
           Projects are saved in this browser only — another device can't see them. Sharing streams the
           project (model + labels + marker) <strong>directly from this computer to the phone</strong> over
-          an encrypted peer connection; nothing is uploaded to any server. Keep this tab open while the
-          phone loads. For a permanent link, export the bundle and publish it to the site.
+          an encrypted peer connection; nothing is uploaded to any server.{' '}
+          <strong>Put the phone on the same Wi-Fi as this computer</strong> (turn off mobile data if it
+          keeps failing) and keep this page open. For a permanent link, export the bundle and publish it.
         </p>
-        <button onClick={shareToPhone} disabled={share.state === 'working'}>
-          {share.state === 'working' ? 'Connecting…' : '📱 Share to phone'}
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={shareToPhone} disabled={share.state === 'working'}>
+            {share.state === 'working' ? 'Connecting…' : share.state === 'done' ? '↻ New share link' : '📱 Share to phone'}
+          </button>
+          {share.state === 'done' && (
+            <button className="danger" onClick={stopShare}>Stop sharing</button>
+          )}
+        </div>
         {share.state === 'error' && (
           <div className="small" style={{ color: 'var(--danger)', marginTop: 6 }}>
             Share failed: {share.error} — check the internet connection and try again, or publish instead.
@@ -231,7 +246,8 @@ export default function MarkerPanel({
             <p className="small" style={{ marginTop: 6, color: 'var(--ok)' }}>{share.status}</p>
             <p className="small muted" style={{ marginTop: 6 }}>
               Scan with the phone to open the AR viewer, then point it at the printed (or on-screen)
-              marker card below. The link works as long as this tab stays open.
+              marker card below. Sharing keeps running while you use the editor — it stops only when
+              you press Stop, start a new share, or close this browser page.
             </p>
           </div>
         )}
