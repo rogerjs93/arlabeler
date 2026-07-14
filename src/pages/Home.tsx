@@ -10,7 +10,7 @@ import {
   deleteProject,
   type SampleIndexEntry,
 } from '../store/projects'
-import { formatFromFileName } from '../loaders/loadModel'
+import { formatFromFileName, loadModel } from '../loaders/loadModel'
 
 export default function Home() {
   const [local, setLocal] = useState<ARProject[]>([])
@@ -24,12 +24,25 @@ export default function Home() {
   }
   useEffect(refresh, [])
 
+  const [importing, setImporting] = useState(false)
+
   const onFile = async (file: File) => {
     const format = formatFromFileName(file.name)
     if (!format) {
       alert('Unsupported format. Use .glb, .gltf, .obj or .stl')
       return
     }
+    // validate the file parses BEFORE creating a project, so a bad file gives
+    // a clear message instead of a broken project in the list
+    setImporting(true)
+    try {
+      await loadModel(file, format)
+    } catch (e) {
+      setImporting(false)
+      alert(e instanceof Error ? e.message : String(e))
+      return
+    }
+    setImporting(false)
     const id = newProjectId()
     const doc: ARProject = {
       id,
@@ -58,8 +71,8 @@ export default function Home() {
         <span className="muted small">label 3D models → print a card → view in AR on any phone</span>
         <span className="badge" title="If two devices show different builds, refresh the older one">build {__BUILD__}</span>
         <span className="spacer" />
-        <button className="primary" onClick={() => fileRef.current?.click()}>
-          + New project from 3D model
+        <button className="primary" onClick={() => fileRef.current?.click()} disabled={importing}>
+          {importing ? 'Checking model…' : '+ New project from 3D model'}
         </button>
         <input
           ref={fileRef}
