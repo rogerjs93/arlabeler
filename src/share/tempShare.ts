@@ -91,6 +91,50 @@ export function onShareStatus(cb: (s: string) => void): () => void {
   return () => statusListeners.delete(cb)
 }
 
+/**
+ * Chunked transfer: a single huge message chokes the data channel on real
+ * models (a brain GLB is tens of MB), so blobs are streamed in slices with
+ * backpressure, and the receiver uses a stall-based timeout plus progress
+ * reporting instead of one fixed deadline.
+ */
+const CHUNK_BYTES = 64 * 1024
+const BUFFER_HIGH_WATER = 8 * 1024 * 1024
+
+const mb = (n: number) => (n / 1048576).toFixed(1)
+
+async function streamPayload(conn: DataConnection, payload: SharePayload, onUpdate: (s: string) => void) {
+  const dc = (conn as unknown as { dataChannel?: RTCDataChannel }).dataChannel
+  const send = async (msg: unknown) => {
+    while (dc && dc.bufferedAmount > BUFFER_HIGH_WATER) {
+      await new Promise((r) => setTimeout(r, 50))
+    }
+    conn.send(msg)
+  }
+
+  const streams: { which: string; buf: ArrayBuffer }[] = [
+    { which: 'model', buf: payload.model },
+    ...(payload.mind ? [{ which: 'mind', buf: payload.mind }] : []),
+    ...(payload.extras ?? []).map((buf, i) => ({ which: `extra${i}`, buf })),
+  ]
+  const total = streams.reduce((n, s) => n + s.buf.byteLength, 0)
+  await send({ type: 'meta', doc: payload.doc, streams: streams.map((s) => ({ which: s.which, size: s.buf.byteLength })) })
+
+  let sent = 0
+  let lastReport = 0
+  for (const s of streams) {
+    for (let o = 0; o < s.buf.byteLength; o += CHUNK_BYTES) {
+      await send({ type: 'chunk', which: s.which, data: s.buf.slice(o, Math.min(o + CHUNK_BYTES, s.buf.byteLength)) })
+      sent += Math.min(CHUNK_BYTES, s.buf.byteLength - o)
+      if (sent - lastReport > 2 * 1024 * 1024) {
+        lastReport = sent
+        onUpdate(`sending… ${mb(sent)} / ${mb(total)} MB`)
+      }
+    }
+  }
+  await send({ type: 'eof' })
+  onUpdate(`sent ${mb(total)} MB — waiting for the phone to confirm…`)
+}
+
 /** Editor side: host the current project over WebRTC. Resolves once the peer is ready. */
 export async function hostShare(
   doc: ARProject,
@@ -131,7 +175,7 @@ export async function hostShare(
     onUpdate('phone connecting…')
     conn.on('open', () => {
       onUpdate(`sending to device ${served + 1}…`)
-      conn.send({ type: 'project', doc: payload.doc, model: payload.model, mind: payload.mind })
+      streamPayload(conn, payload, onUpdate).catch((e) => onUpdate(`send failed: ${e.message ?? e}`))
     })
     conn.on('data', (d) => {
       const msg = d as { type?: string }
@@ -184,15 +228,55 @@ export async function resolvePeerProject(
     onStatus?.('linking to the sharing computer…')
     const conn = peer.connect(peerId, { reliable: true })
     const payload = await new Promise<SharePayload>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error('The sharing computer did not answer — is its editor tab still open?')),
-        25000,
-      )
-      conn.on('open', () => onStatus?.('connected — receiving the project…'))
+      // stall-based timeout: any message resets it, so big models get all the
+      // time they need as long as bytes keep flowing
+      let timer: number | undefined
+      const arm = (ms: number, message: string) => {
+        window.clearTimeout(timer)
+        timer = window.setTimeout(() => reject(new Error(message)), ms)
+      }
+      arm(25000, 'The sharing computer did not answer — is its editor tab still open?')
+
+      let meta: { doc: ARProject; streams: { which: string; size: number }[] } | null = null
+      const parts = new Map<string, Uint8Array[]>()
+      let received = 0
+      let lastReport = 0
+      const totalOf = () => meta?.streams.reduce((n, s) => n + s.size, 0) ?? 0
+
+      const finish = () => {
+        window.clearTimeout(timer)
+        const concat = (which: string): ArrayBuffer | undefined => {
+          const list = parts.get(which)
+          if (!list) return undefined
+          const size = list.reduce((n, c) => n + c.byteLength, 0)
+          const out = new Uint8Array(size)
+          let o = 0
+          for (const c of list) {
+            out.set(c, o)
+            o += c.byteLength
+          }
+          return out.buffer
+        }
+        const model = concat('model')
+        if (!meta || !model) {
+          reject(new Error('Transfer ended before the model arrived — try scanning again.'))
+          return
+        }
+        const extras: ArrayBuffer[] = []
+        for (let i = 0; ; i++) {
+          const buf = concat(`extra${i}`)
+          if (!buf) break
+          extras.push(buf)
+        }
+        conn.send({ type: 'received' })
+        resolve({ doc: meta.doc, model, mind: concat('mind'), extras: extras.length ? extras : undefined })
+      }
+
+      conn.on('open', () => onStatus?.('connected — waiting for the project…'))
       conn.on('iceStateChanged', (state) => {
         if (state === 'checking') onStatus?.('linking to the sharing computer… (negotiating route)')
         if (state === 'failed') {
-          clearTimeout(timer)
+          window.clearTimeout(timer)
           reject(
             new Error(
               'Direct connection failed — the networks block peer traffic. Put the phone on the same Wi-Fi as the computer and try again.',
@@ -201,19 +285,44 @@ export async function resolvePeerProject(
         }
       })
       conn.on('data', (d) => {
-        const msg = d as { type?: string } & SharePayload
-        if (msg?.type === 'project' && msg.doc && msg.model) {
-          clearTimeout(timer)
-          conn.send({ type: 'received' })
-          resolve({ doc: msg.doc, model: msg.model, mind: msg.mind })
+        arm(20000, 'The transfer stalled — check both devices stay awake and on the network, then rescan.')
+        const msg = d as { type?: string } & Partial<SharePayload> & {
+          streams?: { which: string; size: number }[]
+          which?: string
+          data?: ArrayBuffer | Uint8Array
         }
+        if (msg?.type === 'project' && msg.doc && msg.model) {
+          // legacy single-message sender (older desktop build)
+          window.clearTimeout(timer)
+          conn.send({ type: 'received' })
+          resolve({ doc: msg.doc, model: msg.model, mind: msg.mind, extras: msg.extras })
+          return
+        }
+        if (msg?.type === 'meta' && msg.doc && msg.streams) {
+          meta = { doc: msg.doc, streams: msg.streams }
+          onStatus?.(`receiving the project… 0 / ${mb(totalOf())} MB`)
+          return
+        }
+        if (msg?.type === 'chunk' && msg.which && msg.data) {
+          const bytes = msg.data instanceof Uint8Array ? msg.data : new Uint8Array(msg.data)
+          let list = parts.get(msg.which)
+          if (!list) parts.set(msg.which, (list = []))
+          list.push(bytes)
+          received += bytes.byteLength
+          if (received - lastReport > 1024 * 1024) {
+            lastReport = received
+            onStatus?.(`receiving the project… ${mb(received)} / ${mb(totalOf())} MB`)
+          }
+          return
+        }
+        if (msg?.type === 'eof') finish()
       })
       conn.on('error', (e) => {
-        clearTimeout(timer)
+        window.clearTimeout(timer)
         reject(e)
       })
       peer.on('error', (e) => {
-        clearTimeout(timer)
+        window.clearTimeout(timer)
         reject(e)
       })
     })
