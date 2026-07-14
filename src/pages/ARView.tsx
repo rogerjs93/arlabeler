@@ -6,6 +6,7 @@ import { MindARThree } from 'mind-ar/dist/mindar-image-three.prod.js'
 import { resolveProject } from '../store/projects'
 import { loadModel, formatFromFileName } from '../loaders/loadModel'
 import { EffectsController } from '../scene/effects'
+import { MorphSequence } from '../scene/morph'
 import ViewerHud from '../components/ViewerHud'
 import type { ARProject } from '../types'
 
@@ -27,6 +28,8 @@ export default function ARView() {
   const [doc, setDoc] = useState<ARProject | null>(null)
   const [controller, setController] = useState<EffectsController | null>(null)
   const [selectedLabelId, setSelectedLabelId] = useState<string>()
+  const [morphState, setMorphState] = useState<{ names: string[]; active: number; busy: boolean } | null>(null)
+  const morphRef = useRef<MorphSequence | null>(null)
   const stopRef = useRef<() => void>(() => {})
 
   useEffect(() => {
@@ -123,8 +126,22 @@ export default function ARView() {
         primary = new EffectsController(model, resolved.doc.labels)
         primary.entranceStyle = introStyle
         controllers.push(primary)
-        const content = new THREE.Group()
-        content.add(primary.model.root, primary.pinsGroup)
+
+        // morph sequence: primary + any extra objects (extras carry no labels)
+        const morphItems = [{ controller: primary, name: resolved.doc.name }]
+        for (const extra of resolved.extras ?? []) {
+          const f = formatFromFileName(extra.file)
+          if (!f) continue
+          const em = await loadModel(extra.url, f)
+          const ec = new EffectsController(em, [])
+          ec.entranceStyle = introStyle
+          controllers.push(ec)
+          morphItems.push({ controller: ec, name: extra.name })
+        }
+        const morph = new MorphSequence(morphItems)
+        morphRef.current = morph
+        setMorphState({ names: morph.names, active: 0, busy: false })
+        const content = morph.container
 
         const targetAnchors = targets.map((td) => {
           const anchor = mindar.addAnchor(td.index)
@@ -165,8 +182,9 @@ export default function ARView() {
             primary.playEntrance()
             if (resolved.doc.animation?.autoplay) primary.playClip(resolved.doc.animation.clip)
           }
-          updateDistance(primary, currentHolder.anchor.group, camera)
-          primary.update(clockDt(), camera)
+          const active = morph.activeController
+          updateDistance(active, currentHolder.anchor.group, camera)
+          morph.update(clockDt(), camera)
           renderer.render(scene, camera)
         })
       } else {
@@ -326,7 +344,26 @@ export default function ARView() {
       )}
 
       {doc && controller && (
-        <ViewerHud doc={doc} controller={controller} selectedLabelId={selectedLabelId} onSelectLabel={setSelectedLabelId} />
+        <ViewerHud
+          doc={doc}
+          controller={controller}
+          selectedLabelId={selectedLabelId}
+          onSelectLabel={setSelectedLabelId}
+          morph={
+            morphState && morphState.names.length > 1
+              ? {
+                  ...morphState,
+                  onNext: () => {
+                    const m = morphRef.current
+                    if (!m) return
+                    m.next()
+                    setController(m.activeController)
+                    setMorphState({ names: m.names, active: m.active, busy: m.isMorphing })
+                  },
+                }
+              : undefined
+          }
+        />
       )}
     </div>
   )

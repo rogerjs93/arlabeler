@@ -1,7 +1,7 @@
 import JSZip from 'jszip'
 import Peer, { type DataConnection } from 'peerjs'
 import type { ARProject } from '../types'
-import { loadBlob, type ResolvedProject } from '../store/projects'
+import { loadBlob, loadExtraModel, type ResolvedProject } from '../store/projects'
 
 /**
  * "Share to phone" without publishing and without third-party storage.
@@ -24,6 +24,8 @@ interface SharePayload {
   doc: ARProject
   model: ArrayBuffer
   mind?: ArrayBuffer
+  /** Morph-sequence objects, parallel to doc.extraModels. */
+  extras?: ArrayBuffer[]
 }
 
 /**
@@ -98,10 +100,16 @@ export async function hostShare(
   const model = await loadBlob('model', doc.id)
   if (!model) throw new Error('Model file missing from local storage')
   const mind = await loadBlob('mind', doc.id)
+  const extras: ArrayBuffer[] = []
+  for (let i = 0; i < (doc.extraModels?.length ?? 0); i++) {
+    const b = await loadExtraModel(doc.id, doc.extraModels![i].key ?? i)
+    if (b) extras.push(await b.arrayBuffer())
+  }
   const payload: SharePayload = {
     doc,
     model: await model.arrayBuffer(),
     mind: mind ? await mind.arrayBuffer() : undefined,
+    extras: extras.length ? extras : undefined,
   }
 
   const peer = new Peer(PEER_CONFIG)
@@ -212,9 +220,14 @@ export async function resolvePeerProject(
 
     const modelUrl = URL.createObjectURL(new Blob([payload.model]))
     const mindUrl = payload.mind ? URL.createObjectURL(new Blob([payload.mind])) : undefined
+    const extras = payload.extras?.map((buf, i) => ({
+      name: payload.doc.extraModels?.[i]?.name ?? `object ${i + 2}`,
+      url: URL.createObjectURL(new Blob([buf])),
+      file: payload.doc.extraModels?.[i]?.file ?? 'model.glb',
+    }))
     // small delay so the 'received' ack flushes before we tear down
     setTimeout(() => peer.destroy(), 1500)
-    return { doc: payload.doc, modelUrl, mindUrl, source: 'shared' }
+    return { doc: payload.doc, modelUrl, mindUrl, extras, source: 'shared' }
   } catch (e) {
     peer.destroy()
     throw e
@@ -239,7 +252,13 @@ export async function resolveSharedProject(src: string): Promise<ResolvedProject
   const mindEntry = zip.file(prefix + 'targets.mind')
   const mindUrl = mindEntry ? URL.createObjectURL(await mindEntry.async('blob')) : undefined
 
-  return { doc, modelUrl, mindUrl, source: 'shared' }
+  const extras: { name: string; url: string; file: string }[] = []
+  for (const m of doc.extraModels ?? []) {
+    const entry = zip.file(prefix + m.file)
+    if (entry) extras.push({ name: m.name, url: URL.createObjectURL(await entry.async('blob')), file: m.file })
+  }
+
+  return { doc, modelUrl, mindUrl, extras: extras.length ? extras : undefined, source: 'shared' }
 }
 
 /** Build the exportable zip (still used by the publish flow helpers). */
@@ -251,6 +270,10 @@ export async function buildShareZip(doc: ARProject): Promise<Blob> {
   zip.file(doc.model, model)
   const mind = await loadBlob('mind', doc.id)
   if (mind) zip.file('targets.mind', mind)
+  for (let i = 0; i < (doc.extraModels?.length ?? 0); i++) {
+    const b = await loadExtraModel(doc.id, doc.extraModels![i].key ?? i)
+    if (b) zip.file(doc.extraModels![i].file, b)
+  }
   return zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
 }
 

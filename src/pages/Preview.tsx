@@ -7,6 +7,7 @@ import { OrbitControls, ContactShadows } from '@react-three/drei'
 import { resolveProject, type ResolvedProject } from '../store/projects'
 import { loadModel, formatFromFileName, type LoadedModel } from '../loaders/loadModel'
 import { EffectsController } from '../scene/effects'
+import { MorphSequence } from '../scene/morph'
 import ViewerHud from '../components/ViewerHud'
 import { PollingResizeObserver, needsPollingResize } from '../utils/pollingResizeObserver'
 
@@ -21,10 +22,12 @@ export default function Preview() {
   const location = useLocation()
   const [resolved, setResolved] = useState<ResolvedProject | null>(null)
   const [model, setModel] = useState<LoadedModel | null>(null)
+  const [extraModels, setExtraModels] = useState<{ name: string; model: LoadedModel }[]>([])
   const [error, setError] = useState<string>()
   const [selectedLabelId, setSelectedLabelId] = useState<string>()
   const [simDistance, setSimDistance] = useState<number | null>(null)
-  const controllerRef = useRef<EffectsController | null>(null)
+  const [morphTick, setMorphTick] = useState(0) // re-render when the active object changes
+  const morphRef = useRef<MorphSequence | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -52,27 +55,47 @@ export default function Preview() {
         return
       }
       const m = await loadModel(r.modelUrl, format, r.doc.segmentation)
+      const loadedExtras: { name: string; model: LoadedModel }[] = []
+      for (const extra of r.extras ?? []) {
+        const f = formatFromFileName(extra.file)
+        if (!f) continue
+        loadedExtras.push({ name: extra.name, model: await loadModel(extra.url, f) })
+      }
       if (cancelled) return
       setResolved(r)
       setModel(m)
+      setExtraModels(loadedExtras)
     })().catch((e) => setError(String(e)))
     return () => {
       cancelled = true
-      controllerRef.current?.dispose()
-      controllerRef.current = null
+      morphRef.current?.dispose()
+      morphRef.current = null
     }
   }, [id, location.search])
 
-  const controller = useMemo(() => {
+  const morph = useMemo(() => {
     if (!model || !resolved) return null
-    const c = new EffectsController(model, resolved.doc.labels)
-    controllerRef.current = c
-    if (import.meta.env.DEV) (window as unknown as { __ar: EffectsController }).__ar = c
-    c.entranceStyle = resolved.doc.introStyle ?? 'assemble'
-    if (resolved.doc.animation?.autoplay) c.playClip(resolved.doc.animation.clip)
-    c.playEntrance()
-    return c
-  }, [model, resolved])
+    const primary = new EffectsController(model, resolved.doc.labels)
+    if (import.meta.env.DEV) (window as unknown as { __ar: EffectsController }).__ar = primary
+    primary.entranceStyle = resolved.doc.introStyle ?? 'assemble'
+    if (resolved.doc.animation?.autoplay) primary.playClip(resolved.doc.animation.clip)
+    primary.playEntrance()
+    const items = [
+      { controller: primary, name: resolved.doc.name },
+      ...extraModels.map((e) => {
+        const c = new EffectsController(e.model, [])
+        c.entranceStyle = resolved.doc.introStyle ?? 'assemble'
+        return { controller: c, name: e.name }
+      }),
+    ]
+    const seq = new MorphSequence(items)
+    morphRef.current = seq
+    if (import.meta.env.DEV) (window as unknown as { __morph: MorphSequence }).__morph = seq
+    return seq
+  }, [model, resolved, extraModels])
+
+  const controller = morph ? morph.activeController : null
+  void morphTick // referenced so the state update forces re-render
 
   if (error) {
     return (
@@ -94,12 +117,25 @@ export default function Preview() {
         <span className="badge">3D preview</span>
       </div>
 
-      {resolved && controller && (
+      {resolved && controller && morph && (
         <ViewerHud
           doc={resolved.doc}
           controller={controller}
           selectedLabelId={selectedLabelId}
           onSelectLabel={setSelectedLabelId}
+          morph={
+            morph.count > 1
+              ? {
+                  names: morph.names,
+                  active: morph.active,
+                  busy: morph.isMorphing,
+                  onNext: () => {
+                    morph.next()
+                    setMorphTick((t) => t + 1)
+                  },
+                }
+              : undefined
+          }
         >
           <div className="card" style={{ padding: '8px 10px', width: 190 }}>
             <label className="small muted" style={{ display: 'block', marginBottom: 4 }}>
@@ -133,9 +169,10 @@ export default function Preview() {
         <hemisphereLight args={['#cfd8ea', '#3a4152', 1.1]} />
         <directionalLight position={[3, 5, 2]} intensity={1.6} />
         <directionalLight position={[-3, 2, -2]} intensity={0.5} />
-        {controller && (
+        {controller && morph && (
           <SceneContent
             controller={controller}
+            morph={morph}
             simDistance={simDistance}
             onPick={(labelId, meshName, double) => {
               if (labelId) setSelectedLabelId(labelId)
@@ -159,10 +196,12 @@ export default function Preview() {
 
 function SceneContent({
   controller,
+  morph,
   simDistance,
   onPick,
 }: {
   controller: EffectsController
+  morph: MorphSequence
   simDistance: number | null
   onPick: (labelId: string | undefined, meshName: string | undefined, double: boolean) => void
 }) {
@@ -172,7 +211,7 @@ function SceneContent({
 
   useFrame((_, dt) => {
     controller.cameraDistance = simDistance ?? camera.position.length()
-    controller.update(dt, camera)
+    morph.update(dt, camera)
   })
 
   useEffect(() => {
@@ -194,10 +233,5 @@ function SceneContent({
     return () => el.removeEventListener('pointerdown', onPointerDown)
   }, [gl, camera, controller, raycaster, onPick])
 
-  return (
-    <>
-      <primitive object={controller.model.root} />
-      <primitive object={controller.pinsGroup} />
-    </>
-  )
+  return <primitive object={morph.container} />
 }

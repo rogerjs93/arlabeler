@@ -88,6 +88,12 @@ export interface ARProject {
   segmentation?: Record<string, MeshSegmentation>
   /** Entrance animation played when the marker is found. Default 'assemble'. */
   introStyle?: IntroStyle
+  /**
+   * Additional objects for a morph sequence: in the viewer, the model morphs
+   * 1 → 2 → 3 … on tap. `file` is the filename inside the bundle; `key` is the
+   * stable local-storage slot (survives removals, defaults to index).
+   */
+  extraModels?: { file: string; name: string; key?: number }[]
   attribution?: string
   createdAt: number
   updatedAt: number

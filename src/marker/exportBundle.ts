@@ -1,6 +1,6 @@
 import JSZip from 'jszip'
 import type { ARProject } from '../types'
-import { loadBlob } from '../store/projects'
+import { loadBlob, loadExtraModel } from '../store/projects'
 
 /**
  * Export a project as a static bundle zip: unzip into the site's
@@ -15,6 +15,11 @@ export async function exportBundle(doc: ARProject): Promise<Blob> {
   const model = await loadBlob('model', doc.id)
   if (!model) throw new Error('Model file missing from local storage')
   folder.file(doc.model, model)
+
+  for (let i = 0; i < (doc.extraModels?.length ?? 0); i++) {
+    const extra = await loadExtraModel(doc.id, doc.extraModels![i].key ?? i)
+    if (extra) folder.file(doc.extraModels![i].file, extra)
+  }
 
   const mind = await loadBlob('mind', doc.id)
   if (mind) folder.file('targets.mind', mind)

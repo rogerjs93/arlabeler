@@ -30,12 +30,28 @@ export async function loadBlob(kind: 'model' | 'mind' | 'card', id: string): Pro
   return get(`${kind}:${id}`, store)
 }
 
+/** Extra morph-sequence objects, one blob per index. */
+export async function saveExtraModel(id: string, index: number, blob: Blob): Promise<void> {
+  await set(`xmodel${index}:${id}`, blob, store)
+}
+
+export async function loadExtraModel(id: string, index: number): Promise<Blob | undefined> {
+  return get(`xmodel${index}:${id}`, store)
+}
+
+export async function deleteExtraModel(id: string, index: number): Promise<void> {
+  await del(`xmodel${index}:${id}`, store)
+}
+
+const MAX_EXTRAS = 8
+
 export async function deleteProject(id: string): Promise<void> {
   await Promise.all([
     del(`doc:${id}`, store),
     del(`model:${id}`, store),
     del(`mind:${id}`, store),
     del(`card:${id}`, store),
+    ...Array.from({ length: MAX_EXTRAS }, (_, i) => del(`xmodel${i}:${id}`, store)),
   ])
 }
 
@@ -93,6 +109,8 @@ export interface ResolvedProject {
   doc: ARProject
   modelUrl: string
   mindUrl?: string
+  /** Morph-sequence objects, in order after the primary model. */
+  extras?: { name: string; url: string; file: string }[]
   source: 'static' | 'local' | 'shared'
 }
 
@@ -103,6 +121,7 @@ export async function resolveProject(id: string): Promise<ResolvedProject | unde
       doc: staticDoc,
       modelUrl: staticProjectUrl(id, staticDoc.model),
       mindUrl: staticProjectUrl(id, 'targets.mind'),
+      extras: staticDoc.extraModels?.map((m) => ({ name: m.name, url: staticProjectUrl(id, m.file), file: m.file })),
       source: 'static',
     }
   }
@@ -111,10 +130,17 @@ export async function resolveProject(id: string): Promise<ResolvedProject | unde
   const modelBlob = await loadBlob('model', id)
   if (!modelBlob) return undefined
   const mindBlob = await loadBlob('mind', id)
+  const extras: { name: string; url: string; file: string }[] = []
+  for (let i = 0; i < (doc.extraModels?.length ?? 0); i++) {
+    const m = doc.extraModels![i]
+    const b = await loadExtraModel(id, m.key ?? i)
+    if (b) extras.push({ name: m.name, url: URL.createObjectURL(b), file: m.file })
+  }
   return {
     doc,
     modelUrl: URL.createObjectURL(modelBlob),
     mindUrl: mindBlob ? URL.createObjectURL(mindBlob) : undefined,
+    extras: extras.length ? extras : undefined,
     source: 'local',
   }
 }

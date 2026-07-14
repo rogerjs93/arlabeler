@@ -3,10 +3,12 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { ARProject, Label } from '../../types'
 import { DEFAULT_TRANSFORM, FLAT_TRANSFORM, INTRO_STYLES, LABEL_COLORS, newLabelId, newProjectId } from '../../types'
 import {
+  deleteExtraModel,
   loadBlob,
   loadProjectDoc,
   loadStaticProjectDoc,
   saveBlob,
+  saveExtraModel,
   saveProjectDoc,
   staticProjectUrl,
 } from '../../store/projects'
@@ -209,6 +211,31 @@ export default function Editor() {
     [],
   )
 
+  // ---- morph objects (extra models) ----
+  const addExtraObject = async (file: File) => {
+    if (!doc) return
+    const format = formatFromFileName(file.name)
+    if (!format) {
+      alert('Unsupported format. Use .glb, .gltf, .obj or .stl')
+      return
+    }
+    const key = Math.max(-1, ...(doc.extraModels ?? []).map((m, i) => m.key ?? i)) + 1
+    await saveExtraModel(doc.id, key, file)
+    const entry = {
+      file: `object-${key + 2}.${format}`,
+      name: file.name.replace(/\.[^.]+$/, ''),
+      key,
+    }
+    updateDoc((d) => ({ ...d, extraModels: [...(d.extraModels ?? []), entry] }))
+  }
+
+  const removeExtraObject = async (index: number) => {
+    if (!doc?.extraModels) return
+    const m = doc.extraModels[index]
+    await deleteExtraModel(doc.id, m.key ?? index)
+    updateDoc((d) => ({ ...d, extraModels: d.extraModels!.filter((_, i) => i !== index) }))
+  }
+
   const onLasso = useCallback(
     (polygon: { x: number; y: number }[], camera: import('three').Camera) => {
       setPaint((p) => {
@@ -382,6 +409,51 @@ export default function Editor() {
               </section>
 
               <section>
+                <h3 className="small" style={sectionTitle}>Objects · morph sequence</h3>
+                <div className="small" style={{ padding: '4px 8px' }}>
+                  1. {doc.name} <span className="muted">(this model, with the labels)</span>
+                </div>
+                {(doc.extraModels ?? []).map((m, i) => (
+                  <div key={m.key ?? i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 8px' }}>
+                    <span className="small muted">{i + 2}.</span>
+                    <input
+                      value={m.name}
+                      onChange={(e) =>
+                        updateDoc((d) => ({
+                          ...d,
+                          extraModels: d.extraModels!.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)),
+                        }))
+                      }
+                      style={{ flex: 1, minWidth: 0 }}
+                    />
+                    <button className="danger small" style={{ padding: '2px 8px' }} onClick={() => removeExtraObject(i)}>
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                <label className="small" style={{ display: 'inline-block', marginTop: 6 }}>
+                  <span
+                    role="button"
+                    style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '5px 12px', cursor: 'pointer' }}
+                  >
+                    + add object (morph target)
+                  </span>
+                  <input
+                    type="file"
+                    accept=".glb,.gltf,.obj,.stl"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      if (e.target.files?.[0]) addExtraObject(e.target.files[0])
+                      e.target.value = ''
+                    }}
+                  />
+                </label>
+                <p className="small muted" style={{ margin: '6px 0 0' }}>
+                  In the viewer, a ⇄ button morphs object 1 → 2 → 3 … (labels belong to object 1).
+                </p>
+              </section>
+
+              <section>
                 <h3 className="small" style={sectionTitle}>Placement on the card</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
                   <label className="small">
@@ -401,14 +473,66 @@ export default function Editor() {
                     Card flat on a table (model stands on the card)
                   </label>
                 </div>
-                <SliderRow label={`Scale ${doc.transform.scale.toFixed(2)}`} min={0.2} max={3} step={0.05} value={doc.transform.scale}
+                <SliderRow label={`Scale ${doc.transform.scale.toFixed(2)}×`} min={0.2} max={3} step={0.05} value={doc.transform.scale}
                   onChange={(v) => updateDoc((d) => ({ ...d, transform: { ...d.transform, scale: v } }))} />
-                <SliderRow label={`Rotate ${(doc.transform.rotation[1] * 57.3).toFixed(0)}°`} min={-Math.PI} max={Math.PI} step={0.05} value={doc.transform.rotation[1]}
-                  onChange={(v) => updateDoc((d) => ({ ...d, transform: { ...d.transform, rotation: [d.transform.rotation[0], v, d.transform.rotation[2]] } }))} />
-                <SliderRow label={`Up/down ${doc.transform.offset[1].toFixed(2)}`} min={-0.75} max={1.5} step={0.05} value={doc.transform.offset[1]}
-                  onChange={(v) => updateDoc((d) => ({ ...d, transform: { ...d.transform, offset: [d.transform.offset[0], v, d.transform.offset[2]] } }))} />
-                <SliderRow label={`Forward ${doc.transform.offset[2].toFixed(2)}`} min={-0.5} max={1} step={0.05} value={doc.transform.offset[2]}
-                  onChange={(v) => updateDoc((d) => ({ ...d, transform: { ...d.transform, offset: [d.transform.offset[0], d.transform.offset[1], v] } }))} />
+                <div className="small muted" style={{ margin: '6px 0 2px' }}>Move (relative to the card)</div>
+                {(['X — left / right', 'Y — down / up', 'Z — back / forward'] as const).map((axisLabel, axis) => (
+                  <SliderRow
+                    key={`mv${axis}`}
+                    label={`${axisLabel.slice(0, 1)} ${doc.transform.offset[axis].toFixed(2)}`}
+                    title={axisLabel}
+                    min={-1}
+                    max={1.5}
+                    step={0.05}
+                    value={doc.transform.offset[axis]}
+                    onChange={(v) =>
+                      updateDoc((d) => {
+                        const offset = [...d.transform.offset] as [number, number, number]
+                        offset[axis] = v
+                        return { ...d, transform: { ...d.transform, offset } }
+                      })
+                    }
+                  />
+                ))}
+                <div className="small muted" style={{ margin: '6px 0 2px' }}>Rotate (degrees)</div>
+                {(['X — tilt forward/back', 'Y — turn left/right', 'Z — roll'] as const).map((axisLabel, axis) => (
+                  <SliderRow
+                    key={`rot${axis}`}
+                    label={`${axisLabel.slice(0, 1)} ${(doc.transform.rotation[axis] * 57.2958).toFixed(0)}°`}
+                    title={axisLabel}
+                    min={-Math.PI}
+                    max={Math.PI}
+                    step={Math.PI / 36}
+                    value={doc.transform.rotation[axis]}
+                    onChange={(v) =>
+                      updateDoc((d) => {
+                        const rotation = [...d.transform.rotation] as [number, number, number]
+                        rotation[axis] = v
+                        return { ...d, transform: { ...d.transform, rotation } }
+                      })
+                    }
+                  />
+                ))}
+                <button
+                  className="small"
+                  style={{ marginTop: 4 }}
+                  onClick={() =>
+                    updateDoc((d) => ({
+                      ...d,
+                      transform: {
+                        scale: 1,
+                        rotation: [0, 0, 0],
+                        offset: [...(d.cardOrientation === 'flat' ? FLAT_TRANSFORM : DEFAULT_TRANSFORM).offset] as [number, number, number],
+                      },
+                    }))
+                  }
+                >
+                  reset placement
+                </button>
+                <p className="small muted" style={{ margin: '6px 0 0' }}>
+                  The blue outline in the viewport is the printed card — move and rotate the model
+                  relative to it.
+                </p>
               </section>
 
               <section>
@@ -538,9 +662,9 @@ function LabelRow({
   )
 }
 
-function SliderRow({ label, min, max, step, value, onChange }: { label: string; min: number; max: number; step: number; value: number; onChange: (v: number) => void }) {
+function SliderRow({ label, title, min, max, step, value, onChange }: { label: string; title?: string; min: number; max: number; step: number; value: number; onChange: (v: number) => void }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }} title={title}>
       <span className="small muted" style={{ width: 90, flex: '0 0 auto' }}>{label}</span>
       <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} style={{ flex: 1 }} />
     </div>

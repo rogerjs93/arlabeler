@@ -12,12 +12,15 @@ export default function ViewerHud({
   controller,
   selectedLabelId,
   onSelectLabel,
+  morph,
   children,
 }: {
   doc: ARProject
   controller: EffectsController | null
   selectedLabelId?: string
   onSelectLabel: (id?: string) => void
+  /** Morph sequence controls (shown when the project has extra objects). */
+  morph?: { names: string[]; active: number; busy: boolean; onNext: () => void }
   children?: React.ReactNode
 }) {
   const [explode, setExplode] = useState(0)
@@ -76,6 +79,16 @@ export default function ViewerHud({
           <button onClick={() => setClipPaused(!clipPaused)}>{clipPaused ? '▶ Anim' : '⏸ Anim'}</button>
         )}
         <button onClick={() => controller?.playEntrance()} title="Replay the intro animation">↻ Intro</button>
+        {morph && morph.names.length > 1 && (
+          <button
+            onClick={morph.onNext}
+            disabled={morph.busy}
+            title={`Morph into the next object (${morph.active + 1}/${morph.names.length})`}
+            style={{ borderColor: 'var(--accent-2)' }}
+          >
+            ⇄ {morph.names[(morph.active + 1) % morph.names.length]}
+          </button>
+        )}
         {controller?.isolatedMesh && (
           <button onClick={() => controller.setIsolated(undefined)} style={activeBtn}>Un-isolate</button>
         )}

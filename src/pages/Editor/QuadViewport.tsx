@@ -123,8 +123,10 @@ export default function QuadViewport({
 }
 
 /**
- * Dashed outline showing where the printed marker card sits relative to the
- * model — horizontal (flat on a table) or vertical behind the model (upright).
+ * Outline showing where the printed marker card sits relative to the model.
+ * Mirrors the AR chain exactly: card→model is `container3(flat rot) ∘
+ * inner(offset, rotation, scale)`, so the ghost is that transform inverted —
+ * every placement slider (including all rotations) is visible in the editor.
  */
 function CardGhost({ transform, orientation }: { transform: ModelTransform; orientation: 'flat' | 'upright' }) {
   const ref = useRef<THREE.Group>(null)
@@ -132,10 +134,16 @@ function CardGhost({ transform, orientation }: { transform: ModelTransform; orie
     const g = ref.current
     if (!g) return
     const s = transform.scale || 1
-    // card center in model space = -offset/s ; card width 1 -> 1/s model units
-    g.position.set(-transform.offset[0] / s, -transform.offset[1] / s, -transform.offset[2] / s)
-    g.scale.setScalar(1 / s)
-    g.rotation.x = orientation === 'flat' ? -Math.PI / 2 : 0
+    const inner = new THREE.Matrix4().compose(
+      new THREE.Vector3(...transform.offset),
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(...transform.rotation)),
+      new THREE.Vector3(s, s, s),
+    )
+    if (orientation === 'flat') {
+      inner.premultiply(new THREE.Matrix4().makeRotationX(Math.PI / 2))
+    }
+    g.matrixAutoUpdate = false
+    g.matrix.copy(inner.invert())
   })
   const geo = useMemo(() => {
     const g = new THREE.BufferGeometry()
