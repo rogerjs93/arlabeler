@@ -88,3 +88,28 @@ npm run build          # -> dist/ (base './', hash routing: Pages-safe)
 Deploy `dist/` to the `gh-pages` branch. Exported user bundles: unzip into
 `public/projects/<id>/`, add the id to `public/projects/index.json`, rebuild, and
 republish. The printed QR then resolves to the project from any phone.
+
+## Credits & inspiration
+
+This project was inspired by and builds on the excellent work of others:
+
+- **[mind-ar-js](https://github.com/hiukim/mind-ar-js)** by [hiukim](https://github.com/hiukim)
+  — the web AR image-tracking engine at the heart of the viewer, and its in-browser
+  target compiler (MIT).
+- **[mind-ar-js-react](https://github.com/hiukim/mind-ar-js-react)** by
+  [hiukim](https://github.com/hiukim) — the React integration pattern this project's
+  viewer is modelled on.
+- **[three.js](https://github.com/mrdoob/three.js)** — 3D rendering, model loaders
+  (glTF/OBJ/STL), and the Draco / KTX2 / meshopt decoders bundled in
+  [`public/decoders/`](public/decoders).
+- **[PeerJS](https://github.com/peers/peerjs)** — WebRTC data channels for the
+  direct device-to-device "Share to phone" transfer.
+- **[React](https://react.dev)**, **[Vite](https://vitejs.dev)**,
+  **[@react-three/fiber](https://github.com/pmndrs/react-three-fiber)** &
+  **[drei](https://github.com/pmndrs/drei)**,
+  **[qrcode](https://github.com/soldair/node-qrcode)**,
+  **[JSZip](https://stuk.github.io/jszip/)**, and
+  **[idb-keyval](https://github.com/jakearchibald/idb-keyval)**.
+
+The bundled sample is a stylized demo model generated for this project (CC0).
+Bring your own models — anatomy, scans, product parts — and label away.
