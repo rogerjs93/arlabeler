@@ -97,18 +97,30 @@ export function onShareStatus(cb: (s: string) => void): () => void {
  * backpressure, and the receiver uses a stall-based timeout plus progress
  * reporting instead of one fixed deadline.
  */
-const CHUNK_BYTES = 64 * 1024
-const BUFFER_HIGH_WATER = 8 * 1024 * 1024
+// Under PeerJS's 16 KB chunkedMTU: bigger messages get split internally and
+// its queue drains RECURSIVELY — a deep queue overflows the stack on Firefox
+// ("too much recursion"). Small chunks + strict backpressure keep that queue
+// empty so the recursion never gets deep.
+const CHUNK_BYTES = 12 * 1024
+const BUFFER_HIGH_WATER = 1024 * 1024
 
 const mb = (n: number) => (n / 1048576).toFixed(1)
 
 async function streamPayload(conn: DataConnection, payload: SharePayload, onUpdate: (s: string) => void) {
-  const dc = (conn as unknown as { dataChannel?: RTCDataChannel }).dataChannel
+  const c = conn as unknown as { dataChannel?: RTCDataChannel; bufferSize?: number }
+  const dc = c.dataChannel
+  let sinceYield = 0
   const send = async (msg: unknown) => {
-    while (dc && dc.bufferedAmount > BUFFER_HIGH_WATER) {
-      await new Promise((r) => setTimeout(r, 50))
+    // wait until PeerJS's own queue is empty AND the channel buffer is low
+    while ((c.bufferSize ?? 0) > 0 || (dc ? dc.bufferedAmount : 0) > BUFFER_HIGH_WATER) {
+      await new Promise((r) => setTimeout(r, 25))
     }
     conn.send(msg)
+    // yield to the event loop periodically so the channel can actually drain
+    if (++sinceYield >= 24) {
+      sinceYield = 0
+      await new Promise((r) => setTimeout(r, 0))
+    }
   }
 
   const streams: { which: string; buf: ArrayBuffer }[] = [
