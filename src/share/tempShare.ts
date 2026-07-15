@@ -97,10 +97,14 @@ export function onShareStatus(cb: (s: string) => void): () => void {
  * backpressure, and the receiver uses a stall-based timeout plus progress
  * reporting instead of one fixed deadline.
  */
-// Under PeerJS's 16 KB chunkedMTU: bigger messages get split internally and
-// its queue drains RECURSIVELY — a deep queue overflows the stack on Firefox
-// ("too much recursion"). Small chunks + strict backpressure keep that queue
-// empty so the recursion never gets deep.
+// Two hard constraints from PeerJS internals:
+// 1. Chunks stay under its 16 KB chunkedMTU (bigger messages get split and
+//    the queue drains recursively — deep queues overflow the stack).
+// 2. NOTHING with big arrays may pass through conn.send as an object:
+//    binarypack's pack_array recurses ONCE PER ELEMENT, so a project doc with
+//    painted masks (faceRuns can be 100k+ entries) overflows the stack on any
+//    browser. The doc therefore travels as a JSON byte stream through the
+//    same chunk pipe as the model.
 const CHUNK_BYTES = 12 * 1024
 const BUFFER_HIGH_WATER = 1024 * 1024
 
@@ -123,13 +127,15 @@ async function streamPayload(conn: DataConnection, payload: SharePayload, onUpda
     }
   }
 
+  const docBytes = new TextEncoder().encode(JSON.stringify(payload.doc))
   const streams: { which: string; buf: ArrayBuffer }[] = [
+    { which: 'doc', buf: docBytes.buffer.slice(0, docBytes.byteLength) as ArrayBuffer },
     { which: 'model', buf: payload.model },
     ...(payload.mind ? [{ which: 'mind', buf: payload.mind }] : []),
     ...(payload.extras ?? []).map((buf, i) => ({ which: `extra${i}`, buf })),
   ]
   const total = streams.reduce((n, s) => n + s.buf.byteLength, 0)
-  await send({ type: 'meta', doc: payload.doc, streams: streams.map((s) => ({ which: s.which, size: s.buf.byteLength })) })
+  await send({ type: 'meta', streams: streams.map((s) => ({ which: s.which, size: s.buf.byteLength })) })
 
   let sent = 0
   let lastReport = 0
@@ -249,7 +255,7 @@ export async function resolvePeerProject(
       }
       arm(25000, 'The sharing computer did not answer — is its editor tab still open?')
 
-      let meta: { doc: ARProject; streams: { which: string; size: number }[] } | null = null
+      let meta: { streams: { which: string; size: number }[] } | null = null
       const parts = new Map<string, Uint8Array[]>()
       let received = 0
       let lastReport = 0
@@ -269,9 +275,17 @@ export async function resolvePeerProject(
           }
           return out.buffer
         }
+        const docBuf = concat('doc')
         const model = concat('model')
-        if (!meta || !model) {
-          reject(new Error('Transfer ended before the model arrived — try scanning again.'))
+        if (!docBuf || !model) {
+          reject(new Error('Transfer ended before the project arrived — try scanning again.'))
+          return
+        }
+        let doc: ARProject
+        try {
+          doc = JSON.parse(new TextDecoder().decode(docBuf)) as ARProject
+        } catch {
+          reject(new Error('The received project data is corrupted — try scanning again.'))
           return
         }
         const extras: ArrayBuffer[] = []
@@ -281,7 +295,7 @@ export async function resolvePeerProject(
           extras.push(buf)
         }
         conn.send({ type: 'received' })
-        resolve({ doc: meta.doc, model, mind: concat('mind'), extras: extras.length ? extras : undefined })
+        resolve({ doc, model, mind: concat('mind'), extras: extras.length ? extras : undefined })
       }
 
       conn.on('open', () => onStatus?.('connected — waiting for the project…'))
@@ -310,8 +324,8 @@ export async function resolvePeerProject(
           resolve({ doc: msg.doc, model: msg.model, mind: msg.mind, extras: msg.extras })
           return
         }
-        if (msg?.type === 'meta' && msg.doc && msg.streams) {
-          meta = { doc: msg.doc, streams: msg.streams }
+        if (msg?.type === 'meta' && msg.streams) {
+          meta = { streams: msg.streams }
           onStatus?.(`receiving the project… 0 / ${mb(totalOf())} MB`)
           return
         }
