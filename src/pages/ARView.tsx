@@ -30,6 +30,7 @@ export default function ARView() {
   const [selectedLabelId, setSelectedLabelId] = useState<string>()
   const [morphState, setMorphState] = useState<{ names: string[]; active: number; busy: boolean } | null>(null)
   const morphRef = useRef<MorphSequence | null>(null)
+  const gesturesRef = useRef<{ reset: () => void } | null>(null)
   const stopRef = useRef<() => void>(() => {})
 
   useEffect(() => {
@@ -118,6 +119,7 @@ export default function ARView() {
 
       const controllers: EffectsController[] = []
       const anchors: { group: THREE.Group; visibleRef: { v: boolean } }[] = []
+      const contentGroups: THREE.Group[] = [] // translated by two-finger drag
       let primary: EffectsController
 
       const introStyle = resolved.doc.introStyle ?? 'assemble'
@@ -142,6 +144,7 @@ export default function ARView() {
         morphRef.current = morph
         setMorphState({ names: morph.names, active: 0, busy: false })
         const content = morph.container
+        contentGroups.push(content)
 
         const targetAnchors = targets.map((td) => {
           const anchor = mindar.addAnchor(td.index)
@@ -214,6 +217,7 @@ export default function ARView() {
           const content = new THREE.Group()
           content.add(ctl.model.root, ctl.pinsGroup)
           inner.add(content)
+          contentGroups.push(content)
           const visibleRef = { v: false }
           anchor.onTargetFound = () => {
             visibleRef.v = true
@@ -250,8 +254,8 @@ export default function ARView() {
 
       setController(primary)
 
-      // --- gestures: tap pick, drag rotate, pinch scale ---
-      attachGestures(renderer.domElement, camera, controllers, (labelId, meshName, double) => {
+      // --- gestures: tap pick, drag rotate, two-finger scale + move ---
+      gesturesRef.current = attachGestures(renderer.domElement, camera, controllers, contentGroups, flat, (labelId, meshName, double) => {
         if (labelId) setSelectedLabelId(labelId)
         else if (meshName) {
           if (double) {
@@ -363,7 +367,11 @@ export default function ARView() {
                 }
               : undefined
           }
-        />
+        >
+          <button onClick={() => gesturesRef.current?.reset()} title="Undo touch moves: recenter, unscale, unrotate">
+            ⌖ Recenter
+          </button>
+        </ViewerHud>
       )}
     </div>
   )
@@ -410,12 +418,21 @@ function collectParts(cloneRoot: THREE.Object3D, original: { parts: { name: stri
   return parts
 }
 
+interface GestureApi {
+  /** Undo all touch adjustments (rotation, scale, position). */
+  reset: () => void
+}
+
 function attachGestures(
   el: HTMLElement,
   camera: THREE.Camera,
   controllers: EffectsController[],
+  /** Groups translated by two-finger drag (the morph/content containers). */
+  contents: THREE.Group[],
+  /** Card orientation: maps the vertical finger axis onto the card plane. */
+  flat: boolean,
   onPick: (labelId: string | undefined, meshName: string | undefined, double: boolean) => void,
-) {
+): GestureApi {
   const raycaster = new THREE.Raycaster()
   const pointers = new Map<number, { x: number; y: number }>()
   let startPinch = 0
@@ -423,20 +440,26 @@ function attachGestures(
   let dragStartX = 0
   let dragging = false
   let startRotations: number[] = []
+  let startMid = { x: 0, y: 0 }
+  let startPositions: THREE.Vector3[] = []
   let lastTap = 0
 
   const roots = () => controllers.map((c) => c.model.root)
+  const homePositions = contents.map((c) => c.position.clone())
 
   el.addEventListener('pointerdown', (e) => {
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
     if (pointers.size === 1) {
       dragStartX = e.clientX
       dragging = false
-      startRotations = roots().map((r) => r.rotation.y)
+      startRotations = controllers.map((c) => c.userRotationY)
     } else if (pointers.size === 2) {
       const [a, b] = [...pointers.values()]
       startPinch = Math.hypot(a.x - b.x, a.y - b.y)
       startScales = roots().map((r) => r.scale.x)
+      startMid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+      startPositions = contents.map((c) => c.position.clone())
+      dragging = true // two-finger interaction is never a tap
     }
   })
 
@@ -447,13 +470,37 @@ function attachGestures(
       const dx = e.clientX - dragStartX
       if (Math.abs(dx) > 10) dragging = true
       if (dragging) {
-        roots().forEach((r, i) => (r.rotation.y = startRotations[i] + dx * 0.01))
+        controllers.forEach((c, i) => (c.userRotationY = startRotations[i] + dx * 0.01))
       }
     } else if (pointers.size === 2 && startPinch > 0) {
       const [a, b] = [...pointers.values()]
+      // pinch = scale
       const d = Math.hypot(a.x - b.x, a.y - b.y)
       const f = THREE.MathUtils.clamp(d / startPinch, 0.35, 3)
       roots().forEach((r, i) => r.scale.setScalar(startScales[i] * f))
+      // two-finger drag = move along the card plane
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+      const k = 1.6 / Math.max(1, el.clientWidth) // full screen drag ≈ 1.6 card widths
+      const mx = (mid.x - startMid.x) * k
+      const my = (mid.y - startMid.y) * k
+      contents.forEach((c, i) => {
+        const p = startPositions[i]
+        if (flat) {
+          // card on a table: screen up = away from the viewer along the card
+          c.position.set(
+            THREE.MathUtils.clamp(p.x + mx, -1.5, 1.5),
+            p.y,
+            THREE.MathUtils.clamp(p.z + my, -1.5, 1.5),
+          )
+        } else {
+          // upright card: screen up = up the card
+          c.position.set(
+            THREE.MathUtils.clamp(p.x + mx, -1.5, 1.5),
+            THREE.MathUtils.clamp(p.y - my, -1.5, 1.5),
+            p.z,
+          )
+        }
+      })
     }
   })
 
@@ -483,4 +530,12 @@ function attachGestures(
   }
   el.addEventListener('pointerup', endPointer)
   el.addEventListener('pointercancel', endPointer)
+
+  return {
+    reset: () => {
+      controllers.forEach((c) => (c.userRotationY = 0))
+      roots().forEach((r) => r.scale.setScalar(1))
+      contents.forEach((c, i) => c.position.copy(homePositions[i]))
+    },
+  }
 }

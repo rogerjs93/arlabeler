@@ -73,6 +73,12 @@ export class EffectsController {
   clipPaused = false
   /** Entrance animation style; set before playEntrance(). */
   entranceStyle: IntroStyle = 'assemble'
+  /**
+   * User-controlled extra Y rotation (touch drag in the viewer). Kept as its
+   * own channel because update() re-derives root.rotation.y every frame —
+   * writing to the root directly gets overwritten.
+   */
+  userRotationY = 0
 
   private entranceT = -1 // -1 = not playing, else 0..1
   private time = 0
@@ -243,9 +249,9 @@ export class EffectsController {
       root.position.y = Math.sin(this.time * 1.4) * 0.012
     }
     if (this.turntable) {
-      root.rotation.y = this.baseRotationY + this.time * 0.35
+      root.rotation.y = this.baseRotationY + this.userRotationY + this.time * 0.35
     } else {
-      root.rotation.y = this.baseRotationY
+      root.rotation.y = this.baseRotationY + this.userRotationY
     }
 
     // proximity focus: part whose centroid projects nearest to screen center
