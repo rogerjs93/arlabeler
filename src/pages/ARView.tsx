@@ -306,8 +306,10 @@ export default function ARView() {
   return (
     <div style={{ position: 'relative', height: '100%', background: '#000' }}>
       {/* zIndex: 0 creates a stacking context: MindAR's camera <video> has
-          z-index -2 and would otherwise paint behind the page background. */}
-      <div ref={containerRef} style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 0 }} />
+          z-index -2 and would otherwise paint behind the page background.
+          touchAction none: otherwise mobile browsers grab pinch/drag for PAGE
+          zoom (iOS ignores user-scalable=no) and the model gestures never fire. */}
+      <div ref={containerRef} style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 0, touchAction: 'none' }} />
 
       <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 10, display: 'flex', gap: 8, alignItems: 'center' }}>
         <Link to="/"><button>←</button></Link>
@@ -433,6 +435,8 @@ function attachGestures(
   flat: boolean,
   onPick: (labelId: string | undefined, meshName: string | undefined, double: boolean) => void,
 ): GestureApi {
+  // the browser must not consume pinch/drag for page zoom — gestures act on the model
+  el.style.touchAction = 'none'
   const raycaster = new THREE.Raycaster()
   const pointers = new Map<number, { x: number; y: number }>()
   let startPinch = 0
